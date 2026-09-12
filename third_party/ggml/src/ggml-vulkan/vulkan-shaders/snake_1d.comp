@@ -1,0 +1,30 @@
+#version 450
+
+// snake_1d: element-wise Snake activation with per-channel alpha.
+// y = x + sin^2(alpha * x) / (alpha + 1e-9)
+// Input:  x     [T, C]  F32  (binding 0)
+//         alpha [C]     F32  (binding 1)
+// Output: dst   [T, C]  F32  (binding 2)
+
+layout (binding = 0) readonly buffer A { float x[]; };
+layout (binding = 1) readonly buffer C1 { float alpha[]; };
+layout (binding = 2) writeonly buffer D { float dst[]; };
+
+layout (push_constant) uniform parameter {
+    uint T;
+    uint C;
+} p;
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    uint total = p.C * p.T;
+    if (idx >= total) return;
+
+    uint ic = idx / p.T;
+    float a = alpha[ic] + 1e-9;
+    float ax = a * x[idx];
+    float s = sin(ax);
+    dst[idx] = x[idx] + s * s / a;
+}

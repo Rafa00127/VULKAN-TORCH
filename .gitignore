@@ -1,0 +1,24 @@
+build/
+build-*/
+*.log
+*.pyc
+__pycache__/
+.vs/
+.vscode/
+移植参考/
+
+# python extension emitted into the package
+minitorch/_minitorch*.pyd
+
+# generated test data (dump_*/ref_export outputs) — data/ref_audio/ is tracked
+data/higgstts/
+
+# scratch notebooks / benchmarks / tests (tests/test_matmul.cpp is a CMake
+# build input, so it stays tracked; ignored via tests/* + a negation below)
+/bench/
+tests/*
+!tests/test_matmul.cpp
+
+# C# build output
+bin/
+obj/

@@ -1,0 +1,40 @@
+#version 450
+
+#include "types.glsl"
+
+// im2col_rafa: im2col for ggml-native [C, T_in] input.
+// Input:  x   [C, T_in]  F32  (binding 0)
+// Output: dst [C*K, T_out]     (binding 1, F32 or F16 via D_TYPE)
+// op_params: [K, s0, p0, d0]
+
+layout (binding = 0) readonly buffer A { A_TYPE data_a[]; };
+layout (binding = 1) writeonly buffer D { D_TYPE data_d[]; };
+
+layout (push_constant) uniform parameter {
+    uint C;
+    uint T_in;
+    uint T_out;
+    uint K;
+    int  s0;
+    int  p0;
+    int  d0;
+} p;
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    uint CK = p.C * p.K;
+    if (idx >= CK * p.T_out) return;
+
+    uint ic_k = idx % CK;
+    uint t = idx / CK;
+    uint ic = ic_k / p.K;
+    uint k = ic_k % p.K;
+
+    int inp = int(t * p.s0) - p.p0 + int(k * p.d0);
+    if (inp >= 0 && inp < int(p.T_in))
+        data_d[idx] = D_TYPE(data_a[ic + uint(inp) * p.C]);
+    else
+        data_d[idx] = D_TYPE(0.0);
+}
