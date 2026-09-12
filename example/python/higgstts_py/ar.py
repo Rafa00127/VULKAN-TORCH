@@ -1,7 +1,7 @@
 """HiggsTTS AR (Qwen3 backbone) port — staged, validated against higgstts_py/ar_ref.npz."""
 import numpy as np
 
-import minitorch as mt
+import vulkantorch as mt
 
 D = 2560
 NH = 32
@@ -123,11 +123,18 @@ def sample_codes(logits, temperature, rng, topk=50):
     return out
 
 
-def ar_generate(rt, w, prompt_ids, ref_codes, temperature=0.9, seed=42, max_steps=400, topk=50):
-    """Returns raw codes PT [T, 8] (int32)."""
+def ar_generate(rt, w, prompt_ids, ref_codes, temperature=0.9, seed=42, max_steps=None, topk=50):
+    """Returns raw codes PT [T, 8] (int32).
+
+    ``max_steps=None`` predicts the budget the same way the reference C++
+    (`higgs_backbone_ar`) does: 12 frames per text token + 200 slack.
+    """
     delayed = _apply_delay_pattern(np.asarray(ref_codes, dtype=np.int32))   # [L_audio, 8]
     L = len(prompt_ids)
-    max_ctx = L + max_steps + 8
+    if max_steps is None:
+        n_text = max(1, L - delayed.shape[0] - 5)     # 5 = the prompt's special tokens
+        max_steps = n_text * 12 + 200
+    max_ctx = L + max_steps + 10
     gpu = rt.gpu()
     kv_mem = mt.Memory(gpu, 2 * N_LAYERS * NKV * max_ctx * HD * 2)
     kv_k = kv_mem.tensor([N_LAYERS, NKV, max_ctx, HD], 1, b"")

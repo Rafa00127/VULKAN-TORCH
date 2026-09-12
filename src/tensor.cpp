@@ -7,7 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace mt {
+namespace vt {
 
 std::vector<int64_t> Tensor::shape() const {
     std::vector<int64_t> s;
@@ -57,6 +57,14 @@ std::string Tensor::to_host_bytes() const {
     return out;
 }
 
+void Tensor::to_host_bytes_into(void* out, size_t bytes) const {
+    if (!t_) throw std::runtime_error("to_host_bytes_into: undefined tensor");
+    if (g_ != nullptr) g_->compute_if_needed();
+    require_contiguous(t_);
+    if (bytes > ggml_nbytes(t_)) throw std::runtime_error("to_host_bytes_into: buffer too small");
+    ggml_backend_tensor_get(t_, out, 0, bytes);
+}
+
 std::string Tensor::backend_name() const {
     if (!t_ || !t_->buffer) return "<no buffer>";
     return ggml_backend_buffer_name(t_->buffer);
@@ -76,4 +84,4 @@ std::string Tensor::repr() const {
     return os.str();
 }
 
-}  // namespace mt
+}  // namespace vt

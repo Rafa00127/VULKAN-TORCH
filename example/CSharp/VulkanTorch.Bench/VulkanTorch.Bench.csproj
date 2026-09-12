@@ -6,18 +6,13 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <AssemblyName>HiggsTts.Net</AssemblyName>
-    <RootNamespace>HiggsTts</RootNamespace>
+    <AssemblyName>VulkanTorch.Bench</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\VulkanTorch.Net\VulkanTorch.Net.csproj" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
-    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
   </ItemGroup>
 
-  <!-- native core (built by build_win.py) copied next to the managed output. ggml is
-       linked statically into vulkantorch.dll, so this single file is all we need. -->
   <ItemGroup>
     <None Include="..\..\..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

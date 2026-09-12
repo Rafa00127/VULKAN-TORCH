@@ -1,9 +1,9 @@
-"""HiggsTTS prefill (encode_ref) port to minitorch — staged, validated against
+"""HiggsTTS prefill (encode_ref) port to vulkantorch — staged, validated against
 higgstts_py/ref.npz (PyTorch, bf16) per stage; final codes compared to higgs_tts.dll.
 """
 import numpy as np
 
-import minitorch as mt
+import vulkantorch as mt
 
 STRIDES = [5, 2, 2, 2, 2, 2, 2]
 WAVLM_LAYERS = 12

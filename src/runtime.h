@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace mt {
+namespace vt {
 
 class Runtime;
 
@@ -53,4 +53,4 @@ private:
     std::string name_;
 };
 
-}  // namespace mt
+}  // namespace vt

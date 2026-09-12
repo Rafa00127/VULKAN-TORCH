@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using Minitorch;
+using VulkanTorch;
 
 namespace HiggsTts;
 
@@ -241,15 +241,22 @@ public static class Ar
         return lg;
     }
 
-    /// <summary>Full AR generation; returns raw codes PT [T, N_CB] (int32).</summary>
+    /// <summary>Full AR generation; returns raw codes PT [T, N_CB] (int32).
+    /// <paramref name="maxSteps"/> &lt;= 0 predicts the budget the same way the
+    /// reference C++ (`higgs_backbone_ar`) does: 12 frames per text token + 200.</summary>
     public static int[] Generate(Runtime rt, Device dev, HiggsWeights w, int[] promptIds,
                                  int[] refCodes, int refRows, out int steps, float temperature = 0.9f,
-                                 int seed = 42, int maxSteps = 400, int topk = 50)
+                                 int seed = 42, int maxSteps = 0, int topk = 50)
     {
         var delayed = ApplyDelayPattern(refCodes, refRows);
         int la = delayed.Length / NCb;
         int l = promptIds.Length;
-        int maxCtx = l + maxSteps + 8;
+        if (maxSteps <= 0)
+        {
+            int nText = Math.Max(1, l - la - 5);   // 5 = the prompt's special tokens
+            maxSteps = nText * 12 + 200;
+        }
+        int maxCtx = l + maxSteps + 10;
         using var kv = new KVCache(dev, maxCtx);
         var rng = new Random(seed);
 

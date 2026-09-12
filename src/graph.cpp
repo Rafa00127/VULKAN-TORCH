@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace mt {
+namespace vt {
 
 ggml_tensor* new_tensor_pt(ggml_context* ctx, ggml_type type,
                            const std::vector<int64_t>& pt_shape) {
@@ -133,4 +133,4 @@ void Graph::read(ggml_tensor* node, void* dst, size_t bytes) {
     ggml_backend_tensor_get(node, dst, 0, bytes);
 }
 
-}  // namespace mt
+}  // namespace vt

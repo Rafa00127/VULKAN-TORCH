@@ -5,7 +5,7 @@ the Qwen3 backbone (`blk.*`) belong to the AR/decode stages and are skipped.
 """
 import numpy as np
 
-import minitorch as mt
+import vulkantorch as mt
 
 PREFILL_PREFIXES = (
     "codec.ac_enc",   # acoustic encoder (DAC encoder)

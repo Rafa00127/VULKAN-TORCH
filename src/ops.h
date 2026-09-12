@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace mt {
+namespace vt {
 
 // All ops append nodes to the current Graph (see Graph::Scope) and return a
 // handle. Nothing is computed until a Tensor is materialized (to_host).
@@ -74,4 +74,4 @@ Tensor im2col_rafa(const Tensor& x, int K, int s0, int p0, int d0, ggml_type dst
 Tensor snake_1d(const Tensor& x, const Tensor& alpha);
 Tensor col2im_1d(const Tensor& col, int s0, int oc, int p0);
 
-}  // namespace mt
+}  // namespace vt

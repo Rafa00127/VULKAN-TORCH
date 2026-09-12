@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace mt {
+namespace vt {
 
 Memory::Memory(Device dev, size_t max_bytes) : dev_(dev) {
     // Allocating a backend buffer while a graph capture is active corrupts the
@@ -56,4 +56,4 @@ Tensor Memory::tensor(const std::vector<int64_t>& pt_shape, const void* data, si
     return tensor(pt_shape, GGML_TYPE_F32, data, bytes);
 }
 
-}  // namespace mt
+}  // namespace vt

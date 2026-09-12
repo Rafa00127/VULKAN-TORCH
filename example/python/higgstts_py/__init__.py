@@ -1,6 +1,6 @@
 from higgstts_py import _paths
 
-_paths.setup()  # repo root on sys.path (minitorch) + native DLL dirs
+_paths.setup()  # repo root on sys.path (vulkantorch) + native DLL dirs
 
 __all__ = ["HiggsTTS"]
 

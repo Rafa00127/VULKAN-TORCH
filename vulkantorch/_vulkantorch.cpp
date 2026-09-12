@@ -9,10 +9,10 @@
 #include "tensor.h"
 
 namespace py = pybind11;
-using namespace mt;
+using namespace vt;
 
-PYBIND11_MODULE(_minitorch, m) {
-    m.doc() = "minitorch: a minimal PyTorch-style tensor library on ggml-vulkan";
+PYBIND11_MODULE(_vulkantorch, m) {
+    m.doc() = "vulkantorch: a minimal PyTorch-style tensor library on ggml-vulkan";
 
     py::class_<Device>(m, "Device")
         .def("name", [](const Device& d) { return d.name(); })
@@ -106,7 +106,7 @@ PYBIND11_MODULE(_minitorch, m) {
     m.def("gelu", &gelu, py::arg("a"));
     m.def("elu", &elu, py::arg("a"));
     m.def("silu", &silu, py::arg("a"));
-    m.def("tanh", &mt::tanh, py::arg("a"));
+    m.def("tanh", &vt::tanh, py::arg("a"));
     m.def("soft_max", &soft_max, py::arg("a"));
     m.def("linear", &linear, py::arg("x"), py::arg("w"));
     m.def("rms_norm", &rms_norm, py::arg("a"), py::arg("eps"));

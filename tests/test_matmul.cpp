@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
-using namespace mt;
+using namespace vt;
 
 static std::vector<double> matmul_ref(const std::vector<float>& A, const std::vector<float>& B,
                                       int M, int K, int N) {

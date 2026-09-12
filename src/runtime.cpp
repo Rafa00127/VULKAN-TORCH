@@ -9,12 +9,12 @@
 #include <stdexcept>
 #include <string>
 
-namespace mt {
+namespace vt {
 
-// Pick the GPU device. MT_BACKEND=vulkan|hip selects by name (HIP devices are
+// Pick the GPU device. VT_BACKEND=vulkan|hip selects by name (HIP devices are
 // named "ROCm*"); otherwise the first GPU is used.
 static ggml_backend_dev_t pick_gpu() {
-    const char* want_env = std::getenv("MT_BACKEND");
+    const char* want_env = std::getenv("VT_BACKEND");
     std::string want = want_env ? want_env : "";
     std::transform(want.begin(), want.end(), want.begin(), ::tolower);
 
@@ -77,4 +77,4 @@ Runtime::~Runtime() {
     if (backend_ != nullptr) ggml_backend_free(backend_);
 }
 
-}  // namespace mt
+}  // namespace vt

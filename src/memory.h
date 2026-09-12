@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-namespace mt {
+namespace vt {
 
 // Persistent, device-resident storage for weights: one ggml context plus one
 // backend buffer (WEIGHTS usage) bound to a Device. Tensors created here live on
@@ -44,4 +44,4 @@ private:
     size_t offset_ = 0;
 };
 
-}  // namespace mt
+}  // namespace vt

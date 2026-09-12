@@ -1,7 +1,7 @@
-"""DAC decoder (codec.decode) in minitorch — codes [T,8] -> 24kHz PCM."""
+"""DAC decoder (codec.decode) in vulkantorch — codes [T,8] -> 24kHz PCM."""
 import numpy as np
 
-import minitorch as mt
+import vulkantorch as mt
 
 AC_DEC_BLOCKS = [(8, 16), (5, 10), (4, 8), (2, 4), (3, 6)]
 

@@ -1,5 +1,5 @@
 using System;
-using Minitorch;
+using VulkanTorch;
 
 internal static class Program
 {

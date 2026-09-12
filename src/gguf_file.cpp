@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace mt {
+namespace vt {
 
 GgufFile::GgufFile(const std::string& path, Device dev, size_t arena_bytes)
     : path_(path), dev_(dev) {
@@ -102,4 +102,4 @@ Tensor GgufFile::tensor(const std::string& name) {
     return out;
 }
 
-}  // namespace mt
+}  // namespace vt

@@ -1,4 +1,4 @@
-using Minitorch;
+using VulkanTorch;
 
 namespace HiggsTts;
 

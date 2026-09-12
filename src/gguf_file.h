@@ -12,7 +12,7 @@
 
 struct gguf_context;
 
-namespace mt {
+namespace vt {
 
 class Memory;
 
@@ -50,4 +50,4 @@ private:
     size_t data_offset_ = 0;
 };
 
-}  // namespace mt
+}  // namespace vt

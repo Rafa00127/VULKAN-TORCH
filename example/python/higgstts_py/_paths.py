@@ -7,23 +7,26 @@ import sys
 def find_root(start=None):
     p = os.path.abspath(start or os.path.dirname(os.path.abspath(__file__)))
     while True:
-        if os.path.exists(os.path.join(p, "build.py")) and os.path.isdir(os.path.join(p, "src")):
+        # repo root = has both CMakeLists.txt and src/ (stable markers, not a script name)
+        if os.path.exists(os.path.join(p, "CMakeLists.txt")) and os.path.isdir(os.path.join(p, "src")):
             return p
         parent = os.path.dirname(p)
         if parent == p:
-            raise RuntimeError("TensorLibrary repo root not found (no build.py/src)")
+            raise RuntimeError("vulkan-torch repo root not found (no CMakeLists.txt + src/)")
         p = parent
 
 
 ROOT = find_root()
 BUILD = os.path.join(ROOT, "build")
 REFS = os.path.join(ROOT, "data", "higgstts")
-REF_WAV = os.path.join(ROOT, "data", "ref_audio", "melinaref_24k.wav")
+REF_AUDIO = os.path.join(ROOT, "data", "ref_audio")
+REF_WAV = os.path.join(REF_AUDIO, "melinaref_24k.wav")
+REF_TOKENIZER = os.path.join(REF_AUDIO, "higgs_tts_v3_tokenizer.json")
 EXAMPLE = os.path.join(ROOT, "example", "python")
 
 
 def setup():
-    """Put the repo root (minitorch) + example dir on sys.path and expose native DLLs.
+    """Put the repo root (vulkantorch) + example dir on sys.path and expose native DLLs.
 
     Called from the package __init__, so any ``import higgstts_py`` bootstraps the
     environment without every script repeating the sys.path / DLL-dir dance.

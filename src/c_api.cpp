@@ -12,7 +12,7 @@
 #include <cstring>
 #include <new>
 
-using namespace mt;
+using namespace vt;
 
 static Tensor wrap(void* p) { return Tensor(static_cast<ggml_tensor*>(p), Graph::current()); }
 static void* unwrap(const Tensor& t) { return t.raw(); }
@@ -20,23 +20,23 @@ static void* unwrap(const Tensor& t) { return t.raw(); }
 extern "C" {
 
 // ---- runtime / device ----
-void* mt_runtime_new(void) { return new (std::nothrow) Runtime(); }
-void mt_runtime_free(void* rt) { delete static_cast<Runtime*>(rt); }
-const char* mt_runtime_name(void* rt) { return rt ? static_cast<Runtime*>(rt)->name() : ""; }
-void* mt_runtime_gpu(void* rt) { return new Device(static_cast<Runtime*>(rt)->gpu()); }
-void* mt_runtime_cpu(void* rt) { return new Device(static_cast<Runtime*>(rt)->cpu()); }
+void* vt_runtime_new(void) { return new (std::nothrow) Runtime(); }
+void vt_runtime_free(void* rt) { delete static_cast<Runtime*>(rt); }
+const char* vt_runtime_name(void* rt) { return rt ? static_cast<Runtime*>(rt)->name() : ""; }
+void* vt_runtime_gpu(void* rt) { return new Device(static_cast<Runtime*>(rt)->gpu()); }
+void* vt_runtime_cpu(void* rt) { return new Device(static_cast<Runtime*>(rt)->cpu()); }
 
 // ---- gguf ----
-void* mt_gguf_new(const char* path, void* device, size_t arena_bytes) {
+void* vt_gguf_new(const char* path, void* device, size_t arena_bytes) {
     return new (std::nothrow) GgufFile(path, *static_cast<Device*>(device), arena_bytes);
 }
-void mt_gguf_free(void* g) { delete static_cast<GgufFile*>(g); }
-int mt_gguf_has(void* g, const char* name) {
+void vt_gguf_free(void* g) { delete static_cast<GgufFile*>(g); }
+int vt_gguf_has(void* g, const char* name) {
     return static_cast<GgufFile*>(g)->has(name) ? 1 : 0;
 }
-int mt_gguf_count(void* g) { return static_cast<GgufFile*>(g)->count(); }
-const char* mt_gguf_name(void* g, int i) { return static_cast<GgufFile*>(g)->name_at(i); }
-int mt_gguf_tensor(void* g, const char* name, void** out_tensor) {
+int vt_gguf_count(void* g) { return static_cast<GgufFile*>(g)->count(); }
+const char* vt_gguf_name(void* g, int i) { return static_cast<GgufFile*>(g)->name_at(i); }
+int vt_gguf_tensor(void* g, const char* name, void** out_tensor) {
     try {
         *out_tensor = unwrap(static_cast<GgufFile*>(g)->tensor(name));
         return 0;
@@ -44,7 +44,7 @@ int mt_gguf_tensor(void* g, const char* name, void** out_tensor) {
         return -1;
     }
 }
-int mt_gguf_shape(void* g, const char* name, int64_t* out, int* ndim) {
+int vt_gguf_shape(void* g, const char* name, int64_t* out, int* ndim) {
     try {
         auto s = static_cast<GgufFile*>(g)->shape(name);
         for (size_t i = 0; i < s.size(); ++i) out[i] = s[i];
@@ -56,11 +56,11 @@ int mt_gguf_shape(void* g, const char* name, int64_t* out, int* ndim) {
 }
 
 // ---- memory ----
-void* mt_memory_new(void* device, size_t bytes) {
+void* vt_memory_new(void* device, size_t bytes) {
     return new (std::nothrow) Memory(*static_cast<Device*>(device), bytes);
 }
-void mt_memory_free(void* m) { delete static_cast<Memory*>(m); }
-int mt_memory_tensor(void* m, const int64_t* shape, int ndim, int dtype, const void* data,
+void vt_memory_free(void* m) { delete static_cast<Memory*>(m); }
+int vt_memory_tensor(void* m, const int64_t* shape, int ndim, int dtype, const void* data,
                      size_t bytes, void** out_tensor) {
     try {
         std::vector<int64_t> sh(shape, shape + ndim);
@@ -73,13 +73,13 @@ int mt_memory_tensor(void* m, const int64_t* shape, int ndim, int dtype, const v
 }
 
 // ---- graph ----
-void* mt_graph_new(void* rt, void* device) {
+void* vt_graph_new(void* rt, void* device) {
     return new (std::nothrow) Graph(*static_cast<Runtime*>(rt), *static_cast<Device*>(device));
 }
-void mt_graph_free(void* g) { delete static_cast<Graph*>(g); }
-void mt_graph_enter(void* g) { static_cast<Graph*>(g)->enter(); }
-void mt_graph_exit(void* g) { static_cast<Graph*>(g)->exit(); }
-int mt_graph_input(void* g, const int64_t* shape, int ndim, const void* data, size_t bytes,
+void vt_graph_free(void* g) { delete static_cast<Graph*>(g); }
+void vt_graph_enter(void* g) { static_cast<Graph*>(g)->enter(); }
+void vt_graph_exit(void* g) { static_cast<Graph*>(g)->exit(); }
+int vt_graph_input(void* g, const int64_t* shape, int ndim, const void* data, size_t bytes,
                    void** out_tensor) {
     try {
         std::vector<int64_t> sh(shape, shape + ndim);
@@ -89,7 +89,7 @@ int mt_graph_input(void* g, const int64_t* shape, int ndim, const void* data, si
         return -1;
     }
 }
-int mt_graph_input_i32(void* g, const int64_t* shape, int ndim, const void* data, size_t bytes,
+int vt_graph_input_i32(void* g, const int64_t* shape, int ndim, const void* data, size_t bytes,
                        void** out_tensor) {
     try {
         std::vector<int64_t> sh(shape, shape + ndim);
@@ -99,89 +99,94 @@ int mt_graph_input_i32(void* g, const int64_t* shape, int ndim, const void* data
         return -1;
     }
 }
-void mt_graph_to_bytes(void* g, void* tensor, void* out, size_t bytes) {
+void vt_graph_to_bytes(void* g, void* tensor, void* out, size_t bytes) {
     std::string s = Tensor(static_cast<ggml_tensor*>(tensor), static_cast<Graph*>(g)).to_host_bytes();
     std::memcpy(out, s.data(), bytes < s.size() ? bytes : s.size());
 }
 
 // ---- tensor metadata ----
-int mt_tensor_dim(void* t) { return ggml_n_dims(static_cast<ggml_tensor*>(t)); }
-int64_t mt_tensor_numel(void* t) { return ggml_nelements(static_cast<ggml_tensor*>(t)); }
-void mt_tensor_shape(void* t, int64_t* out) {
+int vt_tensor_dim(void* t) { return ggml_n_dims(static_cast<ggml_tensor*>(t)); }
+int64_t vt_tensor_numel(void* t) { return ggml_nelements(static_cast<ggml_tensor*>(t)); }
+void vt_tensor_shape(void* t, int64_t* out) {
     ggml_tensor* tt = static_cast<ggml_tensor*>(t);
     int nd = ggml_n_dims(tt);
     for (int i = 0; i < nd; ++i) out[i] = tt->ne[nd - 1 - i];
 }
-void mt_tensor_mark_output(void* t) {
+void vt_tensor_mark_output(void* t) {
     if (t) ggml_set_output(static_cast<ggml_tensor*>(t));
 }
-const char* mt_tensor_backend_name(void* t) {
+const char* vt_tensor_backend_name(void* t) {
     ggml_tensor* tt = static_cast<ggml_tensor*>(t);
     return (tt && tt->buffer) ? ggml_backend_buffer_name(tt->buffer) : "";
 }
+int vt_tensor_type(void* t) { return static_cast<int>(static_cast<ggml_tensor*>(t)->type); }
+size_t vt_tensor_nbytes(void* t) { return ggml_nbytes(static_cast<ggml_tensor*>(t)); }
+void vt_tensor_to_bytes(void* t, void* out, size_t bytes) {
+    Tensor(static_cast<ggml_tensor*>(t), nullptr).to_host_bytes_into(out, bytes);
+}
 
 // ---- ops ----
-void* mt_matmul(void* a, void* b) { return unwrap(matmul(wrap(a), wrap(b))); }
-void* mt_mul_mat(void* a, void* b) { return unwrap(mul_mat(wrap(a), wrap(b))); }
-void* mt_add(void* a, void* b) { return unwrap(add(wrap(a), wrap(b))); }
-void* mt_sub(void* a, void* b) { return unwrap(sub(wrap(a), wrap(b))); }
-void* mt_mul(void* a, void* b) { return unwrap(mul(wrap(a), wrap(b))); }
-void* mt_scale(void* a, float s) { return unwrap(scale(wrap(a), s)); }
-void* mt_transpose(void* a) { return unwrap(transpose(wrap(a))); }
-void* mt_contiguous(void* a) { return unwrap(contiguous(wrap(a))); }
-void* mt_reshape(void* a, const int64_t* shape, int ndim) {
+void* vt_matmul(void* a, void* b) { return unwrap(matmul(wrap(a), wrap(b))); }
+void* vt_mul_mat(void* a, void* b) { return unwrap(mul_mat(wrap(a), wrap(b))); }
+void* vt_add(void* a, void* b) { return unwrap(add(wrap(a), wrap(b))); }
+void* vt_sub(void* a, void* b) { return unwrap(sub(wrap(a), wrap(b))); }
+void* vt_mul(void* a, void* b) { return unwrap(mul(wrap(a), wrap(b))); }
+void* vt_scale(void* a, float s) { return unwrap(scale(wrap(a), s)); }
+void* vt_transpose(void* a) { return unwrap(transpose(wrap(a))); }
+void* vt_contiguous(void* a) { return unwrap(contiguous(wrap(a))); }
+void* vt_reshape(void* a, const int64_t* shape, int ndim) {
     return unwrap(reshape(wrap(a), std::vector<int64_t>(shape, shape + ndim)));
 }
-void* mt_repeat(void* a, const int64_t* shape, int ndim) {
+void* vt_repeat(void* a, const int64_t* shape, int ndim) {
     return unwrap(repeat(wrap(a), std::vector<int64_t>(shape, shape + ndim)));
 }
-void* mt_gelu(void* a) { return unwrap(gelu(wrap(a))); }
-void* mt_elu(void* a) { return unwrap(elu(wrap(a))); }
-void* mt_silu(void* a) { return unwrap(silu(wrap(a))); }
-void* mt_tanh(void* a) { return unwrap(tanh(wrap(a))); }
-void* mt_soft_max(void* a) { return unwrap(soft_max(wrap(a))); }
-void* mt_linear(void* x, void* w) { return unwrap(linear(wrap(x), wrap(w))); }
-void* mt_rms_norm(void* a, float eps) { return unwrap(rms_norm(wrap(a), eps)); }
-void* mt_layer_norm(void* a, float eps) { return unwrap(layer_norm(wrap(a), eps)); }
-void* mt_concat(void* a, void* b, int64_t d) { return unwrap(concat(wrap(a), wrap(b), d)); }
-void* mt_argmax(void* a) { return unwrap(argmax(wrap(a))); }
-void* mt_get_rows(void* a, void* ids) { return unwrap(get_rows(wrap(a), wrap(ids))); }
-void* mt_sum_rows(void* a) { return unwrap(sum_rows(wrap(a))); }
-void* mt_cast(void* a, int type) { return unwrap(cast(wrap(a), static_cast<ggml_type>(type))); }
-void* mt_cpy(void* a, void* dst) { return unwrap(cpy(wrap(a), wrap(dst))); }
-void* mt_view_2d(void* a, int64_t ne0, int64_t ne1, size_t nb1, size_t off) {
+void* vt_gelu(void* a) { return unwrap(gelu(wrap(a))); }
+void* vt_elu(void* a) { return unwrap(elu(wrap(a))); }
+void* vt_silu(void* a) { return unwrap(silu(wrap(a))); }
+void* vt_tanh(void* a) { return unwrap(tanh(wrap(a))); }
+void* vt_soft_max(void* a) { return unwrap(soft_max(wrap(a))); }
+void* vt_linear(void* x, void* w) { return unwrap(linear(wrap(x), wrap(w))); }
+void* vt_rms_norm(void* a, float eps) { return unwrap(rms_norm(wrap(a), eps)); }
+void* vt_layer_norm(void* a, float eps) { return unwrap(layer_norm(wrap(a), eps)); }
+void* vt_concat(void* a, void* b, int64_t d) { return unwrap(concat(wrap(a), wrap(b), d)); }
+void* vt_argmax(void* a) { return unwrap(argmax(wrap(a))); }
+void* vt_get_rows(void* a, void* ids) { return unwrap(get_rows(wrap(a), wrap(ids))); }
+void* vt_sum_rows(void* a) { return unwrap(sum_rows(wrap(a))); }
+void* vt_cast(void* a, int type) { return unwrap(cast(wrap(a), static_cast<ggml_type>(type))); }
+void* vt_cpy(void* a, void* dst) { return unwrap(cpy(wrap(a), wrap(dst))); }
+void* vt_view_2d(void* a, int64_t ne0, int64_t ne1, size_t nb1, size_t off) {
     return unwrap(view_2d(wrap(a), ne0, ne1, nb1, off));
 }
-void* mt_view_3d(void* a, int64_t ne0, int64_t ne1, int64_t ne2, size_t nb1, size_t nb2, size_t off) {
+void* vt_view_3d(void* a, int64_t ne0, int64_t ne1, int64_t ne2, size_t nb1, size_t nb2, size_t off) {
     return unwrap(view_3d(wrap(a), ne0, ne1, ne2, nb1, nb2, off));
 }
-void* mt_view_4d(void* a, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3, size_t nb1, size_t nb2,
+void* vt_view_4d(void* a, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3, size_t nb1, size_t nb2,
                  size_t nb3, size_t off) {
     return unwrap(view_4d(wrap(a), ne0, ne1, ne2, ne3, nb1, nb2, nb3, off));
 }
-void* mt_permute_pt(void* a, int p0, int p1, int p2, int p3) {
+void* vt_permute_pt(void* a, int p0, int p1, int p2, int p3) {
     return unwrap(permute_pt(wrap(a), p0, p1, p2, p3));
 }
-void* mt_rope(void* a, void* pos, int n_dims, int mode, int n_ctx_orig, float fb, float fs,
+void* vt_rope(void* a, void* pos, int n_dims, int mode, int n_ctx_orig, float fb, float fs,
               float ef, float af, float bf, float bs) {
     Tensor p = pos ? wrap(pos) : Tensor();
     return unwrap(rope(wrap(a), p, n_dims, mode, n_ctx_orig, fb, fs, ef, af, bf, bs));
 }
-void* mt_flash_attn(void* q, void* k, void* v, void* mask, float scale, float mb, float ls) {
+void* vt_flash_attn(void* q, void* k, void* v, void* mask, float scale, float mb, float ls) {
     Tensor m = mask ? wrap(mask) : Tensor();
     return unwrap(flash_attn(wrap(q), wrap(k), wrap(v), m, scale, mb, ls));
 }
-void* mt_conv1d(void* x, void* w, int stride, int pad, int dil) {
+void* vt_conv1d(void* x, void* w, int stride, int pad, int dil) {
     return unwrap(conv1d(wrap(x), wrap(w), stride, pad, dil));
 }
-void* mt_conv_transpose_1d(void* x, void* wp, int stride, int oc) {
+void* vt_conv_transpose_1d(void* x, void* wp, int stride, int oc) {
     return unwrap(conv_transpose_1d(wrap(x), wrap(wp), stride, oc));
 }
-void* mt_snake_1d(void* x, void* alpha) { return unwrap(snake_1d(wrap(x), wrap(alpha))); }
-void* mt_im2col_rafa(void* x, int K, int s0, int p0, int d0) {
+void* vt_snake_1d(void* x, void* alpha) { return unwrap(snake_1d(wrap(x), wrap(alpha))); }
+void* vt_im2col_rafa(void* x, int K, int s0, int p0, int d0) {
     return unwrap(im2col_rafa(wrap(x), K, s0, p0, d0, GGML_TYPE_F32));
 }
-void* mt_col2im_1d(void* col, int s0, int oc, int p0) {
+void* vt_col2im_1d(void* col, int s0, int oc, int p0) {
     return unwrap(col2im_1d(wrap(col), s0, oc, p0));
 }
 

@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace mt {
+namespace vt {
 
 class Tensor;
 class Runtime;
@@ -85,4 +85,4 @@ private:
     bool computed_ = false;
 };
 
-}  // namespace mt
+}  // namespace vt

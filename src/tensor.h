@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace mt {
+namespace vt {
 
 class Graph;
 
@@ -39,6 +39,9 @@ public:
     // pending graph is computed first.
     std::vector<float> to_host() const;
     std::string to_host_bytes() const;  // raw bytes, avoids per-element conversion
+    // Raw readback into a caller buffer; works for any dtype and any tensor that
+    // already has a backend buffer (weights included — no graph needed).
+    void to_host_bytes_into(void* out, size_t bytes) const;
 
     // Mark as a graph output so the scheduler will not reuse its buffer. Call
     // this on any tensor you will read AFTER the graph is built (before the
@@ -56,4 +59,4 @@ private:
     std::shared_ptr<void> keepalive_;
 };
 
-}  // namespace mt
+}  // namespace vt

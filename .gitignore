@@ -8,14 +8,16 @@ __pycache__/
 移植参考/
 
 # python extension emitted into the package
-minitorch/_minitorch*.pyd
+vulkantorch/_vulkantorch*.pyd
 
 # generated test data (dump_*/ref_export outputs) — data/ref_audio/ is tracked
 data/higgstts/
 
-# scratch notebooks / benchmarks / tests (tests/test_matmul.cpp is a CMake
-# build input, so it stays tracked; ignored via tests/* + a negation below)
-/bench/
+# scratch notebooks / tests, but keep the CMake build inputs + the benchmark
+# suite (bench_cpp.cpp is compiled by CMakeLists; bench_py.py is its Python twin)
+/bench/*
+!/bench/bench_cpp.cpp
+!/bench/bench_py.py
 tests/*
 !tests/test_matmul.cpp
 

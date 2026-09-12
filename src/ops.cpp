@@ -4,12 +4,12 @@
 
 #include <stdexcept>
 
-namespace mt {
+namespace vt {
 
 static Graph& cur() {
     Graph* g = Graph::current();
     if (g == nullptr) {
-        throw std::runtime_error("minitorch op called outside a Graph::Scope");
+        throw std::runtime_error("vulkantorch op called outside a Graph::Scope");
     }
     return *g;
 }
@@ -307,4 +307,4 @@ Tensor col2im_1d(const Tensor& col, int s0, int oc, int p0) {
     return Tensor(r, &g);
 }
 
-}  // namespace mt
+}  // namespace vt

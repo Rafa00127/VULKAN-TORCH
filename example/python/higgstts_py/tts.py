@@ -1,4 +1,4 @@
-r"""Unified HiggsTTS API on minitorch.
+r"""Unified HiggsTTS API on vulkantorch.
 
     tts = HiggsTTS(gguf, tokenizer_json)
     codes = tts.encode_ref(ref_wav_24k)                 # reference audio -> codes [T,8]
@@ -10,14 +10,16 @@ r"""Unified HiggsTTS API on minitorch.
 import librosa
 import numpy as np
 
-import minitorch as mt
+import vulkantorch as mt
 
+from higgstts_py import _paths
 from higgstts_py import ar as AR
 from higgstts_py import decode as DE
 from higgstts_py import model as M
 from higgstts_py.weights import HiggsWeights
 
-_TOKENIZER_JSON = r"<local>/reader-app\models\higgs_tts_v3_tokenizer.json"
+# ships with the repo (data/ref_audio/); pass tokenizer_json= to override
+_TOKENIZER_JSON = _paths.REF_TOKENIZER
 
 # prompt special token ids (from higgs_tts.h; GGUF metadata can override)
 TOK_TTS = 151667
@@ -105,7 +107,7 @@ class HiggsTTS:
 
     # ---- 2. text + ref codes -> AR codes ----
     def generate(self, text, ref_codes, ref_text="", temperature=0.9, seed=42, topk=50,
-                 max_steps=400):
+                 max_steps=None):
         num_ref = np.asarray(ref_codes).shape[0] + (N_CB - 1)   # + delay pattern
         prompt = self.build_prompt(text, ref_text, num_ref)
         return AR.ar_generate(self.rt, self.w, prompt, np.asarray(ref_codes, dtype=np.int32),
@@ -117,7 +119,7 @@ class HiggsTTS:
 
     # ---- end to end ----
     def synthesize(self, text, ref_wav, ref_text="", sample_rate=24000, temperature=0.9,
-                   seed=42, topk=50, max_steps=400):
+                   seed=42, topk=50, max_steps=None):
         ref_codes = self.encode_ref(ref_wav, sample_rate)
         codes = self.generate(text, ref_codes, ref_text, temperature, seed, topk, max_steps)
         return self.decode(codes)
