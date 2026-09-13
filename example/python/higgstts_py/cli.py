@@ -62,6 +62,8 @@ def main():
     p.add_argument("--max-steps", type=int, default=0,
                    help="AR step budget; 0 = predict from text length (12/token + 200)")
     p.add_argument("--encode-only", action="store_true", help="stop after encode_ref")
+    p.add_argument("--no-graph-cache", action="store_true",
+                   help="rebuild the decode graph every step (A/B against the default cached path)")
     a = p.parse_args()
 
     t0 = time.perf_counter()
@@ -80,7 +82,8 @@ def main():
     prompt = tts.build_prompt(a.text, a.ref_text, ref_codes.shape[0] + AR.N_CB - 1)
     t0 = time.perf_counter()
     codes = AR.ar_generate(tts.rt, tts.w, prompt, ref_codes, temperature=a.temperature,
-                           seed=a.seed, max_steps=a.max_steps or None, topk=a.topk)
+                           seed=a.seed, max_steps=a.max_steps or None, topk=a.topk,
+                           graph_cache=not a.no_graph_cache)
     ar_ms = (time.perf_counter() - t0) * 1e3
     steps = codes.shape[0] + AR.N_CB - 1
 

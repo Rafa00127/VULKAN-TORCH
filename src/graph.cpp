@@ -67,6 +67,10 @@ void Graph::init(void* meta_buf, size_t meta_bytes, size_t max_nodes) {
 }
 
 Graph::~Graph() {
+    if (gallocr_ != nullptr) {
+        ggml_gallocr_free(gallocr_);
+        gallocr_ = nullptr;
+    }
     if (t_last_computed == this) {
         ggml_backend_sched_reset(sched_);
         t_last_computed = nullptr;
@@ -99,14 +103,30 @@ Tensor Graph::input_i32(const std::vector<int64_t>& pt_shape, const void* data, 
 }
 
 void Graph::set_input(ggml_tensor* node, const void* data, size_t bytes) {
+    // Replace rather than append when the node is already registered, so a
+    // captured graph can be replayed with fresh inputs via compute().
     std::vector<uint8_t> buf(bytes);
     std::copy_n(static_cast<const uint8_t*>(data), bytes, buf.data());
+    for (auto& [n, existing] : inputs_) {
+        if (n == node) {
+            existing = std::move(buf);
+            return;
+        }
+    }
     inputs_.emplace_back(node, std::move(buf));
 }
 
-void Graph::compute_if_needed() {
-    if (computed_) return;
-
+void Graph::compute() {
+    // One-shot only. Re-running the scheduler's reset+alloc rewrites the graph's
+    // buffers in a way that changes the RESULT on many graphs (see
+    // tests/repro_graphcache.cpp): the output then depends on the allocation pass
+    // rather than on the inputs. Replay must go through alloc_static()/compute_static().
+    if (computed_) {
+        throw std::runtime_error(
+            "Graph::compute(): this graph was already computed. Replaying a scheduler-"
+            "allocated graph is not supported (see tests/repro_graphcache.cpp) -- use "
+            "alloc_static() + compute_static() for replay.");
+    }
     ggml_backend_sched_reset(sched_);
 
     // Placement is driven by the tensors themselves (torch-style): weights live
@@ -126,6 +146,34 @@ void Graph::compute_if_needed() {
     }
     computed_ = true;
     t_last_computed = this;
+}
+
+void Graph::alloc_static() {
+    if (gallocr_ != nullptr) return;
+    gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+    if (gallocr_ == nullptr) throw std::runtime_error("Graph: ggml_gallocr_new failed");
+    if (!ggml_gallocr_alloc_graph(gallocr_, gf_)) {
+        throw std::runtime_error("Graph: ggml_gallocr_alloc_graph failed");
+    }
+}
+
+void Graph::compute_static() {
+    if (gallocr_ == nullptr) {
+        throw std::runtime_error("Graph::compute_static: call alloc_static() first");
+    }
+    for (auto& [node, data] : inputs_) {
+        ggml_backend_tensor_set(node, data.data(), 0, data.size());
+    }
+    const ggml_status st = ggml_backend_graph_compute(backend_, gf_);
+    if (st != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("Graph: ggml_backend_graph_compute failed");
+    }
+    computed_ = true;
+}
+
+void Graph::compute_if_needed() {
+    if (computed_) return;
+    compute();
 }
 
 void Graph::read(ggml_tensor* node, void* dst, size_t bytes) {

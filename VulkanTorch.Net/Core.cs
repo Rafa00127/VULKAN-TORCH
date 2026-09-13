@@ -95,6 +95,9 @@ public sealed class Graph : IDisposable
 
     public Graph(Runtime rt, Device device) => Handle = Native.vt_graph_new(rt.H, device.Handle);
 
+    /// <summary>Number of nodes in the captured graph (introspection).</summary>
+    public int NodeCount => Native.vt_graph_n_nodes(Handle);
+
     public void Enter() => Native.vt_graph_enter(Handle);
     public void Exit() => Native.vt_graph_exit(Handle);
 
@@ -131,6 +134,54 @@ public sealed class Graph : IDisposable
             return new Tensor(t);
         }
         finally { pin.Free(); }
+    }
+
+    /// <summary>
+    /// One-shot compute of the captured graph. NOT for replay: re-running the
+    /// scheduler's reset+alloc changes the result on many graphs (the output then
+    /// depends on the allocation pass, not on the inputs). For replay use
+    /// <see cref="AllocStatic"/> + <see cref="ComputeStatic"/>.
+    /// </summary>
+    public void Compute() => Native.vt_graph_compute(Handle);
+
+    /// <summary>
+    /// Static replay path: allocate the graph ONCE with a graph allocator, then only
+    /// re-upload inputs + compute. Cheaper than <see cref="Compute"/> (no reset/alloc
+    /// per replay) and required for correctness: re-allocating on every replay makes
+    /// the result depend on the allocation pass rather than on the inputs.
+    /// Call after the graph is fully captured; then use <see cref="ComputeStatic"/>.
+    /// </summary>
+    public void AllocStatic() => Native.vt_graph_alloc_static(Handle);
+
+    /// <summary>Replay a statically-allocated graph (see <see cref="AllocStatic"/>).</summary>
+    public void ComputeStatic() => Native.vt_graph_compute_static(Handle);
+
+    /// <summary>Update the host data of an already-created input tensor (for replay).</summary>
+    public void SetInput(Tensor tensor, byte[] data)
+    {
+        var pin = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
+        {
+            if (Native.vt_graph_set_input(Handle, tensor.Handle, pin.AddrOfPinnedObject(),
+                    (UIntPtr)data.Length) != 0)
+                throw new InvalidOperationException("Graph.SetInput failed");
+        }
+        finally { pin.Free(); }
+    }
+
+    public void SetInput(Tensor tensor, float[] data)
+    {
+        var bytes = new byte[data.Length * 4];
+        Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
+        SetInput(tensor, bytes);
+    }
+
+    /// <summary>Update the host data of an already-created I32 input tensor (for replay).</summary>
+    public void SetInput(Tensor tensor, int[] data)
+    {
+        var bytes = new byte[data.Length * 4];
+        Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
+        SetInput(tensor, bytes);
     }
 
     public void Dispose()

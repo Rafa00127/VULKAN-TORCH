@@ -15,7 +15,10 @@ static Graph& cur() {
 }
 
 Tensor matmul(const Tensor& a, const Tensor& b) {
-    if (a.dim() != 2 || b.dim() != 2) throw std::runtime_error("matmul: expected 2D tensors");
+    // ggml_n_dims collapses trailing PT dims of size 1, so a PT [1, K] operand reports
+    // rank 1. Check the actual ggml shape instead: a matrix is ne[2] == ne[3] == 1.
+    if (!ggml_is_matrix(a.raw()) || !ggml_is_matrix(b.raw()))
+        throw std::runtime_error("matmul: expected 2D tensors");
     Graph& g = cur();
     ggml_context* ctx = g.ctx();
     // C = A @ B. With the ne-reversed layout: b^T is K-contiguous, and
@@ -54,6 +57,13 @@ Tensor mul(const Tensor& a, const Tensor& b) {
     return Tensor(r, &g);
 }
 
+Tensor div(const Tensor& a, const Tensor& b) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_div(g.ctx(), a.raw(), b.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
 Tensor scale(const Tensor& a, float s) {
     Graph& g = cur();
     ggml_tensor* r = ggml_scale(g.ctx(), a.raw(), s);
@@ -61,8 +71,15 @@ Tensor scale(const Tensor& a, float s) {
     return Tensor(r, &g);
 }
 
+Tensor scale_bias(const Tensor& a, float s, float b) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_scale_bias(g.ctx(), a.raw(), s, b);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
 Tensor transpose(const Tensor& a) {
-    if (a.dim() != 2) throw std::runtime_error("transpose: only 2D supported");
+    // ggml_transpose swaps ne0/ne1, i.e. PyTorch transpose(-2, -1) for any rank.
     Graph& g = cur();
     ggml_tensor* r = ggml_transpose(g.ctx(), a.raw());
     g.add(r);
@@ -109,6 +126,31 @@ Tensor gelu(const Tensor& a) {
     return Tensor(r, &g);
 }
 
+Tensor gelu_erf(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_gelu_erf(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor relu(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_relu(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+Tensor sigmoid(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_sigmoid(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+Tensor exp(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_exp(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
 Tensor elu(const Tensor& a) {
     Graph& g = cur();
     ggml_tensor* r = ggml_elu(g.ctx(), a.raw());
@@ -137,6 +179,55 @@ Tensor soft_max(const Tensor& a) {
     return Tensor(r, &g);
 }
 
+Tensor softplus(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_softplus(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor sin(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_sin(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor cos(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_cos(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor sqrt(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_sqrt(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor sqr(const Tensor& a) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_sqr(g.ctx(), a.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor group_norm(const Tensor& a, int n_groups, float eps) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_group_norm(g.ctx(), a.raw(), n_groups, eps);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor diag_mask_inf(const Tensor& a, int n_past) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_diag_mask_inf(g.ctx(), a.raw(), n_past);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
 Tensor linear(const Tensor& x, const Tensor& w) {
     Graph& g = cur();
     ggml_tensor* r = ggml_mul_mat(g.ctx(), w.raw(), x.raw());
@@ -160,7 +251,10 @@ Tensor layer_norm(const Tensor& a, float eps) {
 
 Tensor concat(const Tensor& a, const Tensor& b, int64_t pt_dim) {
     Graph& g = cur();
-    const int dim_ne = a.dim() - 1 - static_cast<int>(pt_dim);
+    // Use the larger rank: ggml_n_dims collapses trailing PT dims of size 1, so a
+    // [1, D] operand reports rank 1 and would otherwise pick the wrong ggml axis.
+    const int rank = a.dim() > b.dim() ? a.dim() : b.dim();
+    const int dim_ne = rank - 1 - static_cast<int>(pt_dim);
     ggml_tensor* r = ggml_concat(g.ctx(), a.raw(), b.raw(), dim_ne);
     g.add(r);
     return Tensor(r, &g);
@@ -201,6 +295,20 @@ Tensor cpy(const Tensor& a, const Tensor& dst) {
     return Tensor(r, &g);
 }
 
+Tensor set_rows(const Tensor& dst, const Tensor& src, const Tensor& idx) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_set_rows(g.ctx(), dst.raw(), src.raw(), idx.raw());
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor view_1d(const Tensor& a, int64_t ne0, size_t offset) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_view_1d(g.ctx(), a.raw(), ne0, offset);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
 Tensor view_2d(const Tensor& a, int64_t ne0, int64_t ne1, size_t nb1, size_t offset) {
     Graph& g = cur();
     ggml_tensor* r = ggml_view_2d(g.ctx(), a.raw(), ne0, ne1, nb1, offset);
@@ -226,7 +334,12 @@ Tensor view_4d(const Tensor& a, int64_t ne0, int64_t ne1, int64_t ne2, int64_t n
 
 Tensor permute_pt(const Tensor& a, int p0, int p1, int p2, int p3) {
     Graph& g = cur();
-    const int ax[4] = {3 - p3, 3 - p2, 3 - p1, 3 - p0};
+    // PyTorch semantics: result dim j == input dim p[j]. ggml_permute(a, axis0..3)
+    // instead scatters (ne[axis_i] = a.ne[i]), so invert p before mapping.
+    const int p[4] = {p0, p1, p2, p3};
+    int q[4];
+    for (int k = 0; k < 4; ++k) q[p[k]] = k;
+    const int ax[4] = {3 - q[3], 3 - q[2], 3 - q[1], 3 - q[0]};
     ggml_tensor* r = ggml_permute(g.ctx(), a.raw(), ax[0], ax[1], ax[2], ax[3]);
     g.add(r);
     return Tensor(r, &g);
@@ -269,6 +382,33 @@ Tensor conv1d(const Tensor& x, const Tensor& w, int stride, int pad, int dilatio
     return Tensor(y, &g);
 }
 
+Tensor conv2d(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0, int d1) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_conv_2d(g.ctx(), a.raw(), b.raw(), s0, s1, p0, p1, d0, d1);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor conv1d_dw(const Tensor& x, const Tensor& w, int stride, int pad, int dilation) {
+    Graph& g = cur();
+    ggml_context* ctx = g.ctx();
+    // x: PT [T, C]; w: PT [C, 1, K] -> PT [T_out, C].
+    // ggml_conv_1d_dw is unreliable (its own header warns about it); lower to the plain
+    // depthwise-2d kernel with a height of 1, exactly as audio.cpp does.
+    // ggml_conv_2d_dw_direct takes a: ne=[KW,KH,1,C] (PT [C,1,KH,KW]) and
+    // b: ne=[W,H,C,N] (PT [N,C,H,W]) -> ne=[OW,OH,C,N] (PT [N,C,OH,OW]).
+    const int64_t T = x.shape()[0];
+    const int64_t C = w.shape()[0];
+    const int64_t K = w.shape()[2];
+    ggml_tensor* xt = ggml_cont(ctx, ggml_transpose(ctx, x.raw()));  // PT [C, T]
+    ggml_tensor* b = ggml_reshape_4d(ctx, xt, T, 1, C, 1);           // PT [1, C, 1, T]
+    ggml_tensor* a = ggml_reshape_4d(ctx, w.raw(), K, 1, 1, C);      // PT [C, 1, 1, K]
+    ggml_tensor* y4 = ggml_conv_2d_dw_direct(ctx, a, b, stride, 1, pad, 0, dilation, 1);
+    ggml_tensor* y2 = ggml_reshape_2d(ctx, y4, y4->ne[0], C);        // PT [C, T_out]
+    ggml_tensor* y = ggml_cont(ctx, ggml_transpose(ctx, y2));        // PT [T_out, C]
+    g.add(y);
+    return Tensor(y, &g);
+}
 Tensor conv_transpose_1d(const Tensor& x, const Tensor& w_perm, int stride, int oc) {
     Graph& g = cur();
     ggml_context* ctx = g.ctx();
@@ -303,6 +443,51 @@ Tensor snake_1d(const Tensor& x, const Tensor& alpha) {
 Tensor col2im_1d(const Tensor& col, int s0, int oc, int p0) {
     Graph& g = cur();
     ggml_tensor* r = ggml_col2im_1d(g.ctx(), col.raw(), s0, oc, p0);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor conv2d_dw(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0, int d1) {
+    Graph& g = cur();
+    // Direct kernel: a ne=[KW,KH,1,C] (PT [C,1,KH,KW]), b ne=[W,H,C,N] (PT [N,C,H,W]).
+    ggml_tensor* r = ggml_conv_2d_dw_direct(g.ctx(), a.raw(), b.raw(), s0, s1, p0, p1, d0, d1);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor conv_transpose_2d(const Tensor& a, const Tensor& b, int stride) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_conv_transpose_2d_p0(g.ctx(), a.raw(), b.raw(), stride);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor pool_2d(const Tensor& a, int op, int k0, int k1, int s0, int s1, float p0, float p1) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_pool_2d(g.ctx(), a.raw(), static_cast<ggml_op_pool>(op), k0, k1, s0, s1,
+                                  p0, p1);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor upsample(const Tensor& a, int scale_factor, int mode) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_upscale(g.ctx(), a.raw(), scale_factor,
+                                  static_cast<ggml_scale_mode>(mode));
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor pad(const Tensor& a, int p0, int p1, int p2, int p3) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_pad(g.ctx(), a.raw(), p0, p1, p2, p3);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
+Tensor clamp(const Tensor& a, float min_v, float max_v) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_clamp(g.ctx(), a.raw(), min_v, max_v);
     g.add(r);
     return Tensor(r, &g);
 }

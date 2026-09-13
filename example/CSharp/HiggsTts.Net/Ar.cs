@@ -55,12 +55,8 @@ public static class Ar
         return Ops.Add(masked, full);
     }
 
-    // PT [T, n*hd] -> PT [n, T, hd] (ne=[hd,T,n]) — layout the KV cache / flash-attn want.
-    private static Tensor ToHeadsPerm(Tensor x, int t, int n)
-    {
-        var x4 = Ops.Reshape(x, new long[] { t, n, HD, 1 });
-        return Ops.Reshape(Ops.Contiguous(Ops.PermutePt(x4, 1, 0, 2, 3)), new long[] { n, t, HD });
-    }
+    // PT [T, n*hd] -> PT [n, T, hd] — layout the KV cache / flash-attn want.
+    private static Tensor ToHeadsPerm(Tensor x, int t, int n) => Attn.ToHeads(x, t, n, HD);
 
     /// <summary>One Qwen3 layer with KV-cache write/read. x: PT [T, D] -> PT [T, D].</summary>
     public static Tensor Layer(HiggsWeights w, int li, Tensor x, Tensor kvK, Tensor kvV, Tensor? pos,
@@ -91,6 +87,51 @@ public static class Ar
         int lk = nPast + t;
         var kf = Ops.Contiguous(Ops.View3d(kvK, HD, lk, NKV, nb1, nb2, (ulong)li * nb3));
         var vf = Ops.Contiguous(Ops.View3d(kvV, HD, lk, NKV, nb1, nb2, (ulong)li * nb3));
+
+        var attn = Ops.FlashAttn(q, kf, vf, mask, 1f / MathF.Sqrt(HD));
+        attn = Ops.Reshape(Ops.Contiguous(attn), new long[] { t, NH * HD });
+        x = Ops.Add(residual, Ops.Linear(attn, w[p + "attn_output.weight"]));
+
+        residual = x;
+        h = Ops.Mul(Ops.RmsNorm(x, Ecl), w[p + "ffn_norm.weight"]);
+        var gate = Ops.Silu(Ops.Linear(h, w[p + "ffn_gate.weight"]));
+        var up = Ops.Linear(h, w[p + "ffn_up.weight"]);
+        x = Ops.Add(residual, Ops.Linear(Ops.Mul(gate, up), w[p + "ffn_down.weight"]));
+        return x;
+    }
+
+    /// <summary>Like Layer, but nothing n_past-dependent is baked into the graph:
+    /// the KV write goes through set_rows at the runtime <paramref name="pos"/>,
+    /// and attention reads a fixed <paramref name="lk"/> window (slots past nPast
+    /// are -inf in <paramref name="mask"/>).</summary>
+    public static Tensor LayerCached(HiggsWeights w, int li, Tensor x, Tensor kvK, Tensor kvV,
+                                     Tensor pos, Tensor mask, int lk, int maxCtx, int t)
+    {
+        string p = $"blk.{li}.";
+        ulong nb1 = (ulong)(2 * HD), nb2 = (ulong)(2 * HD * maxCtx), nb3 = (ulong)(2 * HD * maxCtx * NKV);
+
+        var residual = x;
+        var h = Ops.Mul(Ops.RmsNorm(x, Ecl), w[p + "attn_norm.weight"]);
+
+        var q3 = Ops.Reshape(Ops.Linear(h, w[p + "attn_q.weight"]), new long[] { t, NH, HD });
+        var k3 = Ops.Reshape(Ops.Linear(h, w[p + "attn_k.weight"]), new long[] { t, NKV, HD });
+        var v3 = Ops.Reshape(Ops.Linear(h, w[p + "attn_v.weight"]), new long[] { t, NKV, HD });
+        q3 = Ops.Mul(Ops.RmsNorm(q3, Ecl), w[p + "attn_q_norm.weight"]);
+        k3 = Ops.Mul(Ops.RmsNorm(k3, Ecl), w[p + "attn_k_norm.weight"]);
+
+        q3 = Ops.Rope(q3, pos, HD, 2, 0, RopeTheta, 1f, 0f, 1f, 32f, 1f);
+        k3 = Ops.Rope(k3, pos, HD, 2, 0, RopeTheta, 1f, 0f, 1f, 32f, 1f);
+        var q = ToHeadsPerm(q3, t, NH);
+        var kpo = ToHeadsPerm(k3, t, NKV);
+        var vpo = ToHeadsPerm(v3, t, NKV);
+
+        // write new K/V at row `pos` (= nPast), supplied at runtime
+        ulong off = (ulong)li * nb3;
+        Ops.SetRows(Ops.View3d(kvK, HD, maxCtx, NKV, nb1, nb2, off), kpo, pos);
+        Ops.SetRows(Ops.View3d(kvV, HD, maxCtx, NKV, nb1, nb2, off), vpo, pos);
+
+        var kf = Ops.Contiguous(Ops.View3d(kvK, HD, lk, NKV, nb1, nb2, off));
+        var vf = Ops.Contiguous(Ops.View3d(kvV, HD, lk, NKV, nb1, nb2, off));
 
         var attn = Ops.FlashAttn(q, kf, vf, mask, 1f / MathF.Sqrt(HD));
         attn = Ops.Reshape(Ops.Contiguous(attn), new long[] { t, NH * HD });
@@ -176,26 +217,8 @@ public static class Ar
         return outp;
     }
 
-    public sealed class KVCache : IDisposable
-    {
-        public Memory Mem { get; }
-        public Tensor K { get; }
-        public Tensor V { get; }
-        public int MaxCtx { get; }
-
-        public KVCache(Device dev, int maxCtx)
-        {
-            MaxCtx = maxCtx;
-            Mem = new Memory(dev, (ulong)(2L * NLayers * NKV * maxCtx * HD * 2));
-            K = Mem.Tensor(new long[] { NLayers, NKV, maxCtx, HD }, 1);
-            V = Mem.Tensor(new long[] { NLayers, NKV, maxCtx, HD }, 1);
-        }
-
-        public void Dispose() => Mem.Dispose();
-    }
-
     /// <summary>Run prefill and return the last-position logits flattened [N_CB * CB_VOCAB].</summary>
-    public static float[] PrefillLogits(Runtime rt, Device dev, HiggsWeights w, KVCache kv,
+    public static float[] PrefillLogits(Runtime rt, Device dev, HiggsWeights w, KvCache kv,
                                         int[] promptIds, int[] delayed, int lAudio)
     {
         int l = promptIds.Length;
@@ -225,7 +248,7 @@ public static class Ar
     }
 
     /// <summary>One decode step for a given code vector; returns logits [N_CB * CB_VOCAB].</summary>
-    public static float[] StepLogits(Runtime rt, Device dev, HiggsWeights w, KVCache kv, int[] codes,
+    public static float[] StepLogits(Runtime rt, Device dev, HiggsWeights w, KvCache kv, int[] codes,
                                      int nPast)
     {
         using var g = new Graph(rt, dev);
@@ -243,10 +266,13 @@ public static class Ar
 
     /// <summary>Full AR generation; returns raw codes PT [T, N_CB] (int32).
     /// <paramref name="maxSteps"/> &lt;= 0 predicts the budget the same way the
-    /// reference C++ (`higgs_backbone_ar`) does: 12 frames per text token + 200.</summary>
+    /// reference C++ (`higgs_backbone_ar`) does: 12 frames per text token + 200.
+    /// <paramref name="graphCache"/> captures the decode step once per Lk bucket
+    /// and replays it, skipping the per-token re-emission of the ~400-op graph.</summary>
     public static int[] Generate(Runtime rt, Device dev, HiggsWeights w, int[] promptIds,
                                  int[] refCodes, int refRows, out int steps, float temperature = 0.9f,
-                                 int seed = 42, int maxSteps = 0, int topk = 50)
+                                 int seed = 42, int maxSteps = 0, int topk = 50,
+                                 bool graphCache = true)
     {
         var delayed = ApplyDelayPattern(refCodes, refRows);
         int la = delayed.Length / NCb;
@@ -256,8 +282,13 @@ public static class Ar
             int nText = Math.Max(1, l - la - 5);   // 5 = the prompt's special tokens
             maxSteps = nText * 12 + 200;
         }
-        int maxCtx = l + maxSteps + 10;
-        using var kv = new KVCache(dev, maxCtx);
+        // the cache needs room for the largest bucket
+        // Size the cache to what this run actually needs (rounded up to a bucket),
+        // rather than to the largest bucket: the KV cache is ~147 KB per slot.
+        int need = l + maxSteps + 10;
+        int bucket = graphCache ? GraphCache.PickBucket(need) : 0;
+        int maxCtx = bucket > 0 ? Math.Max(need, bucket) : need;
+        using var kv = new KvCache(dev, NLayers, NKV, HD, maxCtx);
         var rng = new Random(seed);
 
         var lg = PrefillLogits(rt, dev, w, kv, promptIds, delayed, la);
@@ -265,6 +296,9 @@ public static class Ar
         var all = new List<int>(maxSteps * NCb);
         int delayCount = 0, eocCountdown = -1;
         steps = 0;
+        using var replay = graphCache
+            ? new BucketedReplay<StepInputs>(lk => BuildStep(rt, dev, w, kv, lk))
+            : null;
 
         for (int step = 0; step < maxSteps; step++)
         {
@@ -282,9 +316,63 @@ public static class Ar
             steps++;
             if (eocCountdown == 0) break;
 
-            lg = StepLogits(rt, dev, w, kv, cn, nPast);
+            if (replay != null)
+            {
+                if (Environment.GetEnvironmentVariable("HIGGS_DEBUG") == "1")
+                    Console.Error.WriteLine($"higgs step-graph nodes: {replay.Get(nPast).G.NodeCount}");
+                lg = replay.Run(nPast, s =>
+                {
+                    for (int c = 0; c < NCb; c++) s.Set(s.In.Ids[c], IntBytes(c * CbVocab + cn[c]));
+                    s.Set(s.In.Pos, IntBytes(nPast));
+                    s.Set(s.In.MaskIn, GraphCache.CausalMask(1, s.Window, nPast));
+                });
+            }
+            else
+            {
+                lg = StepLogits(rt, dev, w, kv, cn, nPast);   // fresh graph fallback
+            }
             nPast++;
         }
         return ReverseDelayPattern(all.ToArray(), steps);
+    }
+
+    /// <summary>Per-step inputs of the captured decode graph; refreshed via
+    /// <see cref="BucketedReplay{TInputs}.Run"/>.</summary>
+    private sealed class StepInputs
+    {
+        public Tensor[] Ids = null!;
+        public Tensor Pos = null!;
+        public Tensor MaskIn = null!;    // F32 input, refreshed every step
+    }
+
+    private static byte[] IntBytes(int v) => BitConverter.GetBytes(v);
+
+    /// <summary>Capture one T=1 decode step with the window pinned to a bucket: nothing
+    /// depends on nPast, so the graph can be replayed for every position in it.</summary>
+    private static StepGraph<StepInputs> BuildStep(Runtime rt, Device dev, HiggsWeights w, KvCache kv,
+                                                  int lk)
+    {
+        var g = new Graph(rt, dev);
+        g.Enter();
+        var e = new StepInputs();
+        e.Ids = new Tensor[NCb];
+        for (int c = 0; c < NCb; c++) e.Ids[c] = g.InputI32(new long[] { 1 }, new int[1]);
+        e.Pos = g.InputI32(new long[] { 1 }, new int[1]);
+        e.MaskIn = g.Input(new long[] { 1, lk }, new float[lk]);
+        var mask = Ops.Cast(e.MaskIn, Ops.F16);
+
+        Tensor? emb = null;
+        for (int c = 0; c < NCb; c++)
+        {
+            var r = Ops.GetRows(w["fused_embed.weight"], e.Ids[c]);
+            emb = emb is null ? r : Ops.Add(emb, r);
+        }
+        var cur = emb!;
+        for (int li = 0; li < NLayers; li++)
+            cur = LayerCached(w, li, cur, kv.K, kv.V, e.Pos, mask, lk, kv.MaxCtx, 1);
+        var hn = Ops.Mul(Ops.RmsNorm(cur, Ecl), w["output_norm.weight"]);
+        var logits = Ops.Contiguous(FusedHeadLogits(w, hn)).MarkOutput();
+        g.Exit();
+        return new StepGraph<StepInputs>(g, e, logits, lk);
     }
 }

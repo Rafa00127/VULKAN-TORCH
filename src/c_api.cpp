@@ -103,6 +103,18 @@ void vt_graph_to_bytes(void* g, void* tensor, void* out, size_t bytes) {
     std::string s = Tensor(static_cast<ggml_tensor*>(tensor), static_cast<Graph*>(g)).to_host_bytes();
     std::memcpy(out, s.data(), bytes < s.size() ? bytes : s.size());
 }
+int vt_graph_n_nodes(void* g) { return ggml_graph_n_nodes(static_cast<Graph*>(g)->cgraph()); }
+void vt_graph_compute(void* g) { static_cast<Graph*>(g)->compute(); }
+void vt_graph_alloc_static(void* g) { static_cast<Graph*>(g)->alloc_static(); }
+void vt_graph_compute_static(void* g) { static_cast<Graph*>(g)->compute_static(); }
+int vt_graph_set_input(void* g, void* tensor, const void* data, size_t bytes) {
+    try {
+        static_cast<Graph*>(g)->set_input(static_cast<ggml_tensor*>(tensor), data, bytes);
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
 
 // ---- tensor metadata ----
 int vt_tensor_dim(void* t) { return ggml_n_dims(static_cast<ggml_tensor*>(t)); }
@@ -120,6 +132,7 @@ const char* vt_tensor_backend_name(void* t) {
     return (tt && tt->buffer) ? ggml_backend_buffer_name(tt->buffer) : "";
 }
 int vt_tensor_type(void* t) { return static_cast<int>(static_cast<ggml_tensor*>(t)->type); }
+void* vt_tensor_data_ptr(void* t) { return t ? static_cast<ggml_tensor*>(t)->data : nullptr; }
 size_t vt_tensor_nbytes(void* t) { return ggml_nbytes(static_cast<ggml_tensor*>(t)); }
 void vt_tensor_to_bytes(void* t, void* out, size_t bytes) {
     Tensor(static_cast<ggml_tensor*>(t), nullptr).to_host_bytes_into(out, bytes);
@@ -131,7 +144,9 @@ void* vt_mul_mat(void* a, void* b) { return unwrap(mul_mat(wrap(a), wrap(b))); }
 void* vt_add(void* a, void* b) { return unwrap(add(wrap(a), wrap(b))); }
 void* vt_sub(void* a, void* b) { return unwrap(sub(wrap(a), wrap(b))); }
 void* vt_mul(void* a, void* b) { return unwrap(mul(wrap(a), wrap(b))); }
+void* vt_div(void* a, void* b) { return unwrap(div(wrap(a), wrap(b))); }
 void* vt_scale(void* a, float s) { return unwrap(scale(wrap(a), s)); }
+void* vt_scale_bias(void* a, float s, float b) { return unwrap(scale_bias(wrap(a), s, b)); }
 void* vt_transpose(void* a) { return unwrap(transpose(wrap(a))); }
 void* vt_contiguous(void* a) { return unwrap(contiguous(wrap(a))); }
 void* vt_reshape(void* a, const int64_t* shape, int ndim) {
@@ -141,19 +156,35 @@ void* vt_repeat(void* a, const int64_t* shape, int ndim) {
     return unwrap(repeat(wrap(a), std::vector<int64_t>(shape, shape + ndim)));
 }
 void* vt_gelu(void* a) { return unwrap(gelu(wrap(a))); }
+void* vt_relu(void* a) { return unwrap(relu(wrap(a))); }
+void* vt_sigmoid(void* a) { return unwrap(sigmoid(wrap(a))); }
+void* vt_exp(void* a) { return unwrap(exp(wrap(a))); }
 void* vt_elu(void* a) { return unwrap(elu(wrap(a))); }
 void* vt_silu(void* a) { return unwrap(silu(wrap(a))); }
 void* vt_tanh(void* a) { return unwrap(tanh(wrap(a))); }
 void* vt_soft_max(void* a) { return unwrap(soft_max(wrap(a))); }
+void* vt_softplus(void* a) { return unwrap(softplus(wrap(a))); }
+void* vt_sin(void* a) { return unwrap(sin(wrap(a))); }
+void* vt_cos(void* a) { return unwrap(cos(wrap(a))); }
+void* vt_sqrt(void* a) { return unwrap(sqrt(wrap(a))); }
+void* vt_sqr(void* a) { return unwrap(sqr(wrap(a))); }
 void* vt_linear(void* x, void* w) { return unwrap(linear(wrap(x), wrap(w))); }
 void* vt_rms_norm(void* a, float eps) { return unwrap(rms_norm(wrap(a), eps)); }
 void* vt_layer_norm(void* a, float eps) { return unwrap(layer_norm(wrap(a), eps)); }
+void* vt_group_norm(void* a, int n_groups, float eps) {
+    return unwrap(group_norm(wrap(a), n_groups, eps));
+}
+void* vt_diag_mask_inf(void* a, int n_past) { return unwrap(diag_mask_inf(wrap(a), n_past)); }
 void* vt_concat(void* a, void* b, int64_t d) { return unwrap(concat(wrap(a), wrap(b), d)); }
 void* vt_argmax(void* a) { return unwrap(argmax(wrap(a))); }
 void* vt_get_rows(void* a, void* ids) { return unwrap(get_rows(wrap(a), wrap(ids))); }
 void* vt_sum_rows(void* a) { return unwrap(sum_rows(wrap(a))); }
 void* vt_cast(void* a, int type) { return unwrap(cast(wrap(a), static_cast<ggml_type>(type))); }
 void* vt_cpy(void* a, void* dst) { return unwrap(cpy(wrap(a), wrap(dst))); }
+void* vt_set_rows(void* dst, void* src, void* idx) {
+    return unwrap(set_rows(wrap(dst), wrap(src), wrap(idx)));
+}
+void* vt_view_1d(void* a, int64_t ne0, size_t off) { return unwrap(view_1d(wrap(a), ne0, off)); }
 void* vt_view_2d(void* a, int64_t ne0, int64_t ne1, size_t nb1, size_t off) {
     return unwrap(view_2d(wrap(a), ne0, ne1, nb1, off));
 }
@@ -179,6 +210,12 @@ void* vt_flash_attn(void* q, void* k, void* v, void* mask, float scale, float mb
 void* vt_conv1d(void* x, void* w, int stride, int pad, int dil) {
     return unwrap(conv1d(wrap(x), wrap(w), stride, pad, dil));
 }
+void* vt_conv2d(void* a, void* b, int s0, int s1, int p0, int p1, int d0, int d1) {
+    return unwrap(conv2d(wrap(a), wrap(b), s0, s1, p0, p1, d0, d1));
+}
+void* vt_conv1d_dw(void* x, void* w, int stride, int pad, int dil) {
+    return unwrap(conv1d_dw(wrap(x), wrap(w), stride, pad, dil));
+}
 void* vt_conv_transpose_1d(void* x, void* wp, int stride, int oc) {
     return unwrap(conv_transpose_1d(wrap(x), wrap(wp), stride, oc));
 }
@@ -189,5 +226,24 @@ void* vt_im2col_rafa(void* x, int K, int s0, int p0, int d0) {
 void* vt_col2im_1d(void* col, int s0, int oc, int p0) {
     return unwrap(col2im_1d(wrap(col), s0, oc, p0));
 }
+void* vt_conv2d_dw(void* a, void* b, int s0, int s1, int p0, int p1, int d0, int d1) {
+    return unwrap(conv2d_dw(wrap(a), wrap(b), s0, s1, p0, p1, d0, d1));
+}
+void* vt_conv_transpose_2d(void* a, void* b, int stride) {
+    return unwrap(conv_transpose_2d(wrap(a), wrap(b), stride));
+}
+void* vt_pool_2d(void* a, int op, int k0, int k1, int s0, int s1, float p0, float p1) {
+    return unwrap(pool_2d(wrap(a), op, k0, k1, s0, s1, p0, p1));
+}
+void* vt_upsample(void* a, int scale_factor, int mode) {
+    return unwrap(upsample(wrap(a), scale_factor, mode));
+}
+void* vt_pad(void* a, int p0, int p1, int p2, int p3) {
+    return unwrap(pad(wrap(a), p0, p1, p2, p3));
+}
+void* vt_clamp(void* a, float min_v, float max_v) {
+    return unwrap(clamp(wrap(a), min_v, max_v));
+}
+void* vt_gelu_erf(void* a) { return unwrap(gelu_erf(wrap(a))); }
 
 }  // extern "C"

@@ -226,7 +226,8 @@
 #define GGML_MAX_OP_PARAMS      64
 
 #ifndef GGML_MAX_NAME
-#   define GGML_MAX_NAME        64
+// vulkan-torch: raised from 64 — the IndexTTS 2.5 checkpoint names run to ~74 chars
+#   define GGML_MAX_NAME        128
 #endif
 
 #define GGML_DEFAULT_N_THREADS  4

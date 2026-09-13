@@ -59,6 +59,7 @@ internal static class Cli
         string? model = null, refWav = null, outPath = null, tokenizer = null;
         float temperature = 0.9f;
         int topk = 50, seed = 42, maxSteps = 0;   // 0 = predict from text length
+        bool noCache = false;
 
         var positional = new List<string>();
         for (int i = 0; i < args.Length; i++)
@@ -75,6 +76,7 @@ internal static class Cli
                 case "--topk": topk = int.Parse(args[++i]); break;
                 case "--seed": seed = int.Parse(args[++i]); break;
                 case "--max-steps": maxSteps = int.Parse(args[++i]); break;
+                case "--no-graph-cache": noCache = true; break;
                 default: positional.Add(args[i]); break;
             }
         }
@@ -139,7 +141,7 @@ internal static class Cli
 
         sw.Restart();
         var codes = Ar.Generate(rt, dev, w, prompt, refFlat, rows, out int steps,
-                                temperature, seed, maxSteps, topk);
+                                temperature, seed, maxSteps, topk, graphCache: !noCache);
         double arMs = sw.Elapsed.TotalMilliseconds;
         int genRows = codes.Length / Ar.NCb;
         Console.WriteLine($"Backbone AR: {steps} raw frames ({arMs:F0} ms)");

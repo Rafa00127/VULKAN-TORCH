@@ -58,7 +58,20 @@ PYBIND11_MODULE(_vulkantorch, m) {
                 const std::string s = b;
                 return g.input_i32(shape, s.data(), s.size());
             },
-            py::arg("shape"), py::arg("data_bytes"));
+            py::arg("shape"), py::arg("data_bytes"))
+        // graph-cache replay: update a captured input, then compute()
+        // compute() is one-shot; replaying a scheduler-allocated graph changes the result,
+        // so use alloc_static() once after capture, then compute_static() every replay.
+        .def("compute", &Graph::compute)
+        .def("alloc_static", &Graph::alloc_static)
+        .def("compute_static", &Graph::compute_static)
+        .def(
+            "set_input",
+            [](Graph& g, const Tensor& t, py::bytes b) {
+                const std::string s = b;
+                g.set_input(t.raw(), s.data(), s.size());
+            },
+            py::arg("tensor"), py::arg("data_bytes"));
 
     py::class_<Memory, std::shared_ptr<Memory>>(m, "Memory")
         .def(py::init<Device, size_t>(), py::arg("device"), py::arg("bytes"))
@@ -98,19 +111,32 @@ PYBIND11_MODULE(_vulkantorch, m) {
     m.def("add", &add, py::arg("a"), py::arg("b"));
     m.def("sub", &sub, py::arg("a"), py::arg("b"));
     m.def("mul", &mul, py::arg("a"), py::arg("b"));
+    m.def("div", &vt::div, py::arg("a"), py::arg("b"));
     m.def("scale", &scale, py::arg("a"), py::arg("s"));
+    m.def("scale_bias", &scale_bias, py::arg("a"), py::arg("s"), py::arg("b"));
     m.def("transpose", &transpose, py::arg("a"));
     m.def("contiguous", &contiguous, py::arg("a"));
     m.def("reshape", &reshape, py::arg("a"), py::arg("shape"));
     m.def("repeat", &repeat, py::arg("a"), py::arg("shape"));
     m.def("gelu", &gelu, py::arg("a"));
+    m.def("gelu_erf", &gelu_erf, py::arg("a"));
+    m.def("relu", &relu, py::arg("a"));
+    m.def("sigmoid", &sigmoid, py::arg("a"));
+    m.def("exp", &vt::exp, py::arg("a"));
     m.def("elu", &elu, py::arg("a"));
     m.def("silu", &silu, py::arg("a"));
     m.def("tanh", &vt::tanh, py::arg("a"));
     m.def("soft_max", &soft_max, py::arg("a"));
+    m.def("softplus", &vt::softplus, py::arg("a"));
+    m.def("sin", &vt::sin, py::arg("a"));
+    m.def("cos", &vt::cos, py::arg("a"));
+    m.def("sqrt", &vt::sqrt, py::arg("a"));
+    m.def("sqr", &vt::sqr, py::arg("a"));
     m.def("linear", &linear, py::arg("x"), py::arg("w"));
     m.def("rms_norm", &rms_norm, py::arg("a"), py::arg("eps"));
     m.def("layer_norm", &layer_norm, py::arg("a"), py::arg("eps"));
+    m.def("group_norm", &group_norm, py::arg("a"), py::arg("n_groups"), py::arg("eps"));
+    m.def("diag_mask_inf", &diag_mask_inf, py::arg("a"), py::arg("n_past"));
     m.def("concat", &concat, py::arg("a"), py::arg("b"), py::arg("dim"));
     m.def("argmax", &argmax, py::arg("a"));
     m.def("get_rows", &get_rows, py::arg("a"), py::arg("ids"));
@@ -118,6 +144,8 @@ PYBIND11_MODULE(_vulkantorch, m) {
     m.def("cast", [](const Tensor& a, int t) { return cast(a, static_cast<ggml_type>(t)); },
           py::arg("a"), py::arg("type"));
     m.def("cpy", &cpy, py::arg("a"), py::arg("dst"));
+    m.def("set_rows", &set_rows, py::arg("dst"), py::arg("src"), py::arg("idx"));
+    m.def("view_1d", &view_1d, py::arg("a"), py::arg("ne0"), py::arg("offset"));
     m.def("view_2d", &view_2d, py::arg("a"), py::arg("ne0"), py::arg("ne1"), py::arg("nb1"),
           py::arg("offset"));
     m.def("view_3d", &view_3d, py::arg("a"), py::arg("ne0"), py::arg("ne1"), py::arg("ne2"),
@@ -141,6 +169,20 @@ PYBIND11_MODULE(_vulkantorch, m) {
         py::arg("scale"), py::arg("max_bias") = 0.0f, py::arg("logit_softcap") = 0.0f);
     m.def("conv1d", &conv1d, py::arg("x"), py::arg("w"), py::arg("stride") = 1, py::arg("pad") = 0,
           py::arg("dilation") = 1);
+    m.def("conv1d_dw", &conv1d_dw, py::arg("x"), py::arg("w"), py::arg("stride") = 1,
+          py::arg("pad") = 0, py::arg("dilation") = 1);
+    m.def("conv2d", &conv2d, py::arg("a"), py::arg("b"), py::arg("s0") = 1, py::arg("s1") = 1,
+          py::arg("p0") = 0, py::arg("p1") = 0, py::arg("d0") = 1, py::arg("d1") = 1);
+    m.def("conv2d_dw", &conv2d_dw, py::arg("a"), py::arg("b"), py::arg("s0") = 1,
+          py::arg("s1") = 1, py::arg("p0") = 0, py::arg("p1") = 0, py::arg("d0") = 1,
+          py::arg("d1") = 1);
+    m.def("conv_transpose_2d", &conv_transpose_2d, py::arg("a"), py::arg("b"), py::arg("stride"));
+    m.def("pool_2d", &pool_2d, py::arg("a"), py::arg("op"), py::arg("k0"), py::arg("k1"),
+          py::arg("s0"), py::arg("s1"), py::arg("p0") = 0.0f, py::arg("p1") = 0.0f);
+    m.def("upsample", &upsample, py::arg("a"), py::arg("scale_factor"), py::arg("mode") = 0);
+    m.def("pad", &pad, py::arg("a"), py::arg("p0"), py::arg("p1"), py::arg("p2") = 0,
+          py::arg("p3") = 0);
+    m.def("clamp", &clamp, py::arg("a"), py::arg("min_v"), py::arg("max_v"));
     m.def("conv_transpose_1d", &conv_transpose_1d, py::arg("x"), py::arg("w_perm"),
           py::arg("stride"), py::arg("oc"));
     m.def("col2im_1d", &col2im_1d, py::arg("col"), py::arg("s0"), py::arg("oc"), py::arg("p0"));

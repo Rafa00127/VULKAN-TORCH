@@ -52,6 +52,10 @@ target_compile_definitions(vulkantorch PRIVATE VT_SHARED)
 add_executable(test_matmul tests/test_matmul.cpp)
 target_link_libraries(test_matmul PRIVATE vulkantorch_core)
 
+# graph-cache replay nondeterminism reproducer (diagnostic)
+add_executable(repro_graphcache tests/repro_graphcache.cpp)
+target_link_libraries(repro_graphcache PRIVATE vulkantorch_core)
+
 # mirrors bench/bench_py.py and example/CSharp/VulkanTorch.Bench
 add_executable(bench_cpp bench/bench_cpp.cpp)
 target_link_libraries(bench_cpp PRIVATE vulkantorch_core)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ggml.h"
+#include "ggml-alloc.h"
 #include "ggml-backend.h"
 
 #include "runtime.h"
@@ -52,7 +53,19 @@ public:
     void set_input(ggml_tensor* node, const void* data, size_t bytes);
     void mark_output(ggml_tensor* node) { ggml_set_output(node); }
 
+    // Static replay path: allocate the graph ONCE (via ggml_gallocr) and then only
+    // re-upload inputs + compute. Re-running the scheduler's reset+alloc on every
+    // replay made the result depend on the allocation pass instead of the inputs
+    // (see tests/repro_graphcache.cpp) -- ggml_gallocr + alloc-once is bit-exact.
+    // A graph is either sched-driven (compute) or static-driven (compute_static).
+    void alloc_static();
+    void compute_static();
+
     void compute_if_needed();
+    // Force a (re)compute of the already-captured graph. Pair with set_input() to
+    // replay one captured graph with fresh inputs — that is the graph-cache path
+    // (the graph build is skipped; reset + alloc + compute still happen).
+    void compute();
     void read(ggml_tensor* node, void* dst, size_t bytes);
 
     static Graph* current();
@@ -79,6 +92,7 @@ private:
     Device device_;
     ggml_context* ctx_ = nullptr;
     ggml_cgraph* gf_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     std::vector<uint8_t> owned_meta_;
     std::vector<std::pair<ggml_tensor*, std::vector<uint8_t>>> inputs_;
     Graph* prev_ = nullptr;

@@ -38,6 +38,9 @@ public sealed class Tensor
 
     public long NBytes => (long)Native.vt_tensor_nbytes(Handle);
 
+    /// <summary>Device address of this tensor's buffer (0 if unallocated). For introspection.</summary>
+    public IntPtr DataPtr => Native.vt_tensor_data_ptr(Handle);
+
     /// <summary>
     /// Raw device readback into a byte[]. Works for weights too (no graph needed),
     /// for any dtype. Use this to compute derived weights (e.g. the PCE conv fusion).
