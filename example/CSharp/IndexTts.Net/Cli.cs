@@ -94,7 +94,7 @@ internal static class Cli
         float[] style = Style(w, dev, fb, nf);
 
         var feats = Dsp.Stack((float[,])fb.Clone(), out var fmask);
-        var (mean, std) = LoadW2vStats(root);
+        var (mean, std) = LoadW2vStats(w);
         float[] spk = SpeakerEmbedding(w, dev, feats, fmask, mean, std);
         Console.WriteLine($"ref: {nf} fbank frames, {feats.GetLength(0)} w2v frames");
 
@@ -177,14 +177,10 @@ internal static class Cli
         return r;
     }
 
-    private static (float[], float[]) LoadW2vStats(string root)
-    {
-        string p = Path.Combine(root, "data", "indextts_ref", "ra_w2v_mean.npy");
-        if (!File.Exists(p)) throw new FileNotFoundException("wav2vec2bert stats not found (run tools/dump_ref_refaudio.py)", p);
-        var m = Npy.Load(p).Data;
-        var s = Npy.Load(Path.Combine(root, "data", "indextts_ref", "ra_w2v_std.npy")).Data;
-        return (m, s);
-    }
+    /// <summary>Wav2Vec2-BERT's per-dimension mean/std for standardising hidden_states[17].
+    /// Baked into the GGUF by the converter, so the CLI has no side files to depend on.</summary>
+    private static (float[], float[]) LoadW2vStats(GgufWeights w)
+        => (w["w2v.stats_mean"].ReadFloats(), w["w2v.stats_std"].ReadFloats());
 
     private static float[] SpeakerEmbedding(GgufWeights w, Device dev, float[,] feats, float[] mask,
                                             float[] mean, float[] std)

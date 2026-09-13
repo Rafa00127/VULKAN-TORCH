@@ -5,12 +5,7 @@ Visual Studio is located automatically with vswhere; set VT_VS to point at a
 specific install. Forces UTF-8 output and English MSVC diagnostics. Extra CLI
 args are forwarded to the cmake configure step.
 
-    python build_win.py                    # Vulkan build -> build/
-    VT_BUILD_DIR=build-hip python build_win.py -DGGML_HIP=ON -DGGML_VULKAN=OFF \
-        -DHIP_PLATFORM=amd \
-        -DCMAKE_C_COMPILER=<rocm>/bin/clang.exe \
-        -DCMAKE_CXX_COMPILER=<rocm>/bin/clang++.exe \
-        -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+    python build_win.py                    # -> build/
 """
 import os
 import subprocess

@@ -6,8 +6,8 @@ using System.Text;
 namespace IndexTts;
 
 /// <summary>
-/// Minimal reader for numpy ``.npy`` files (the reference tensors dumped by
-/// tools/dump_ref_index.py). Handles the formats we emit: C-contiguous
+/// Minimal reader for numpy ``.npy`` files (reference tensors dumped from the
+/// official PyTorch). Handles the formats we emit: C-contiguous
 /// float32 / float16 / int32.
 /// </summary>
 public sealed class Npy

@@ -16,6 +16,10 @@ vulkantorch/_vulkantorch*.pyd
 data/*
 !data/ref_audio/
 
+# only the converters ship; the dump/compare scripts under tools/ are dev-only
+tools/*
+!tools/convert/
+
 # converted model weights (GGUF) — regenerate with tools/convert/convert_*.py
 # (exclude the contents, not the dir: git cannot re-include a file under an
 #  excluded directory)

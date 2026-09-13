@@ -3,8 +3,8 @@
     python example/python/ocr_py/cli.py --line line.png
     python example/python/ocr_py/cli.py --line region.png --det
 
-Page segmentation is app-specific and lives with the caller (see tools/segment.py
-for the reader app's chapter-frame rule), not in this library.
+Page segmentation is app-specific and lives with the caller, not in this
+library: the caller hands this entry point its line crops.
 """
 import argparse
 import os

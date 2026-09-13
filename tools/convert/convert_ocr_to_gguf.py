@@ -3,7 +3,7 @@
 
 Source (auto-downloaded by paddleocr, nothing fetched here):
     <PADDLEX_HOME>/PP-OCRv6_medium_det[_safetensors]/
-    <PADDLEX_HOME>/PP-OCRv6_medium_rec[_safetensors]/
+    <PADDLEX_HOME>/PP-OCRv6_medium_rec[_safetensors]/   (default: ~/.paddlex/official_models)
 
 That ``*_safetensors`` dir is PaddleX's own pdparams->safetensors export: an
 already-reparameterized inference graph, PyTorch-style names, all F32, with
@@ -26,7 +26,8 @@ import sys
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PADDLEX = r"<PADDLEX_HOME>"
+# PaddleX downloads its models under the user profile; override with PADDLEX_HOME.
+PADDLEX = os.environ.get("PADDLEX_HOME", os.path.expanduser("~/.paddlex/official_models"))
 
 BN_EPS = 1e-5  # nn.BatchNorm2D default
 

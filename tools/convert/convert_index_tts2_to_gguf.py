@@ -108,6 +108,14 @@ def main():
         all_tensors[key] = t.detach().numpy().astype(np.float32)
         print(f"{'emo':9s} 1 tensor   {tuple(t.shape)}   <- {fn}")
 
+    # Wav2Vec2-BERT's per-dimension mean/std for standardising hidden_states[17]. Tiny, and the
+    # CLI needs them at runtime, so keep them in the file rather than in a side .npy.
+    st = torch.load(os.path.join(m, "index2.5", "wav2vec2bert_stats.pt"),
+                    map_location="cpu", weights_only=False)
+    all_tensors["w2v.stats_mean"] = st["mean"].float().numpy()
+    all_tensors["w2v.stats_std"] = torch.sqrt(st["var"].float()).numpy()
+    print(f"{'w2v':9s} 2 tensors  mean/std({all_tensors['w2v.stats_mean'].shape[0]})   <- wav2vec2bert_stats.pt")
+
     n_f32 = sum(1 for v in all_tensors.values() if v.ndim <= 1)
     n_f16 = len(all_tensors) - n_f32
     nbytes = sum(v.nbytes for v in all_tensors.values())

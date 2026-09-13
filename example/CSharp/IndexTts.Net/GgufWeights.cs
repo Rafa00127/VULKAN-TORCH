@@ -6,7 +6,7 @@ namespace IndexTts;
 
 /// <summary>
 /// Weight accessor over the IndexTTS 2.5 GGUF (built by
-/// tools/convert_index_tts2_to_gguf.py). Names are the original checkpoint keys
+/// tools/convert/convert_index_tts2_to_gguf.py). Names are the original checkpoint keys
 /// prefixed by module (`gpt.`, `codec.`, `s2mel.`, `w2v.`, `campplus.`, `bigvgan.`),
 /// so the ported code reads them straight out of the shared GgufFile loader.
 /// </summary>
