@@ -42,7 +42,8 @@ def find_vs():
             pass
 
     # 3) last resort: the usual install locations
-    candidates = [r"<vs>", r"<vs>"]
+    # vswhere (step 2) already finds any VS install regardless of drive; this is a fallback
+    candidates = []
     for base in (r"C:\Program Files\Microsoft Visual Studio",
                  r"C:\Program Files (x86)\Microsoft Visual Studio"):
         for year in ("2026", "2022", "2019"):

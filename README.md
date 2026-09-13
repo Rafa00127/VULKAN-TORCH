@@ -148,7 +148,7 @@ f = vt.GgufFile(r"model.gguf", gpu)
 w = f.tensor("some.weight")     # 拷进显存，保留原量化类型
 ```
 
-> float32 matmul 走 Vulkan 的 fp16 矩阵核，和双精度参考差 ~1e-3，正常。
+> float32 matmul 走 Vulkan 的 fp16 矩阵核，和双精度参考差 ~1e-3，正常。这是**设备级**默认，所有模型共用；想全程走 f32，在 `import vulkantorch` **之前**设环境变量 `GGML_VK_DISABLE_F16=1`（C# 在首次调 `vt_*` 前 `SetEnvironmentVariable`）。启动日志那行 `fp16:` 就是当前状态。
 
 ### 3. 复用同一张图
 
