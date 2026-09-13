@@ -151,7 +151,7 @@ def main():
                os.path.join(PADDLEX, "PP-OCRv6_medium_det_safetensors"))
     rec = load(PPOCRV6SmallRec, PPOCRV6SmallRecConfig,
                os.path.join(PADDLEX, "PP-OCRv6_medium_rec_safetensors"))
-    chars = [l.rstrip("\n") for l in open(os.path.join(ROOT, "data/ocr/ppocrv6_dict.txt"), encoding="utf-8")]
+    chars = [l.rstrip("\n") for l in open(os.path.join(ROOT, "model/ppocrv6/gguf/ppocrv6_dict.txt"), encoding="utf-8")]
     segs = segment_lines(a.image)
     print(f"segmented {len(segs)} lines from {a.image}")
 

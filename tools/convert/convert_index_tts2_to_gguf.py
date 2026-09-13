@@ -67,7 +67,7 @@ def load_safetensors(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=DEFAULT_MODEL, help="dir containing index2.5/, w2v/, camplus/, bigvan/")
-    ap.add_argument("--out", default=os.path.join(ROOT, "data", "indextts2.5.f16.gguf"))
+    ap.add_argument("--out", default=os.path.join(ROOT, "model", "indextts2.5", "indextts2.5.f16.gguf"))
     ap.add_argument("--dry-run", action="store_true", help="only list what would be written")
     a = ap.parse_args()
 
@@ -87,10 +87,26 @@ def main():
             print(f"!! missing: {path}")
             return 1
         t = loader(path)
+        dropped = 0
         for name, arr in t.items():
+            # checkpoints that carry their optimiser state would otherwise double the file
+            if "optimizer" in name:
+                dropped += 1
+                continue
             all_tensors[f"{prefix}.{name}"] = arr
+        if dropped:
+            print(f"{prefix:9s}          (dropped {dropped} optimizer-state tensors)")
         n = sum(v.size for v in t.values())
         print(f"{prefix:9s} {len(t):5d} tensors  {n/1e6:8.1f}M params   <- {os.path.basename(path)}")
+
+    # Emotion matrices for emo_vector control: per-emotion conditioning rows and the matching
+    # speaker rows used to pick the closest one by cosine similarity. Small, and not part of any
+    # network, but keeping them in the same file makes the GGUF self-contained.
+    import torch
+    for key, fn in (("emo.spk_matrix", "feat1.pt"), ("emo.emo_matrix", "feat2.pt")):
+        t = torch.load(os.path.join(m, "index2.5", fn), map_location="cpu", weights_only=False)
+        all_tensors[key] = t.detach().numpy().astype(np.float32)
+        print(f"{'emo':9s} 1 tensor   {tuple(t.shape)}   <- {fn}")
 
     n_f32 = sum(1 for v in all_tensors.values() if v.ndim <= 1)
     n_f16 = len(all_tensors) - n_f32
@@ -112,7 +128,8 @@ def main():
     for name, arr in all_tensors.items():
         # the writer records raw_dtype but writes the array's bytes as-is, so the
         # data itself has to be converted (a raw_dtype-only hint would lie)
-        if arr.ndim > 1:
+        # the emo matrices are consumed as raw conditioning values, so keep them exact
+        if arr.ndim > 1 and not name.startswith("emo."):
             arr = arr.astype(np.float16)
             dt = GGMLQuantizationType.F16
         else:

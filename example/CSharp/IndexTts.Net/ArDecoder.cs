@@ -27,6 +27,9 @@ public sealed class ArDecoder : IDisposable
     /// <summary>false rebuilds the step graph every step — the graph cache's A/B lever.</summary>
     public bool UseReplay { get => _replay.Replay; set => _replay.Replay = value; }
 
+    /// <summary>The KV cache this beam writes into (exposed for beam-search reordering).</summary>
+    public KvCache Cache => _kv;
+
     public int MelLen { get; private set; }
     public int PromptLen { get; private set; }
 

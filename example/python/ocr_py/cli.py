@@ -1,13 +1,19 @@
-"""CLI: OCR a chapter frame (or a single line image) with vulkan-torch.
+"""CLI: recognition (or det+rec) on a single already-cropped line image.
 
-    python example/python/ocr_py/cli.py --image data/ocr/test_frame.png [--lines N]
-    python example/python/ocr_py/cli.py --line path/to/line.png
+    python example/python/ocr_py/cli.py --line line.png
+    python example/python/ocr_py/cli.py --line region.png --det
+
+Page segmentation is app-specific and lives with the caller (see tools/segment.py
+for the reader app's chapter-frame rule), not in this library.
 """
 import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
+sys.path.insert(0, ROOT)                                     # vulkantorch (repo root)
+sys.path.insert(0, os.path.join(ROOT, "example", "python"))  # ocr_py
 
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -17,22 +23,12 @@ from ocr_py.ocr import Ocr  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", help="a chapter frame; run the line segmentation")
-    ap.add_argument("--line", help="a single already-cropped line image")
-    ap.add_argument("--lines", type=int, default=0, help="limit to the first N lines")
+    ap.add_argument("--line", required=True, help="a single cropped line (or region)")
+    ap.add_argument("--det", action="store_true", help="run det+rec instead of rec-only")
     a = ap.parse_args()
     ocr = Ocr()
-    if a.line:
-        rgb = np.array(Image.open(a.line).convert("RGB"))
-        print(ocr.read_line(rgb))
-        return
-    if not a.image:
-        ap.error("need --image or --line")
-    segs = list(Ocr.segment_lines(a.image))
-    if a.lines:
-        segs = segs[: a.lines]
-    for i, s in enumerate(segs):
-        print(ocr.read_line(s))
+    rgb = np.array(Image.open(a.line).convert("RGB"))
+    print(ocr.read_line(rgb, det=a.det))
 
 
 if __name__ == "__main__":

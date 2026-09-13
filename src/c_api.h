@@ -45,6 +45,7 @@ VT_API int   vt_memory_tensor(void* m, const int64_t* shape, int ndim, int dtype
 
 // ---- graph (capture scope) ----
 VT_API void* vt_graph_new(void* rt, void* device);
+VT_API void* vt_graph_new_n(void* rt, void* device, size_t max_nodes);
 VT_API void  vt_graph_free(void* g);
 VT_API void  vt_graph_enter(void* g);
 VT_API void  vt_graph_exit(void* g);
@@ -124,6 +125,7 @@ VT_API void* vt_flash_attn(void* q, void* k, void* v, void* mask, float scale, f
 VT_API void* vt_conv1d(void* x, void* w, int stride, int pad, int dilation);
 VT_API void* vt_conv1d_dw(void* x, void* w, int stride, int pad, int dilation);
 VT_API void* vt_conv2d(void* a, void* b, int s0, int s1, int p0, int p1, int d0, int d1);
+VT_API void* vt_conv2d_tiled(void* a, void* b, int s0, int s1, int p0, int p1, int d0, int d1, int n_tiles);
 VT_API void* vt_conv_transpose_1d(void* x, void* w_perm, int stride, int oc);
 VT_API void* vt_snake_1d(void* x, void* alpha);
 VT_API void* vt_im2col_rafa(void* x, int K, int s0, int p0, int d0);

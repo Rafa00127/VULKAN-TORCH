@@ -173,6 +173,9 @@ PYBIND11_MODULE(_vulkantorch, m) {
           py::arg("pad") = 0, py::arg("dilation") = 1);
     m.def("conv2d", &conv2d, py::arg("a"), py::arg("b"), py::arg("s0") = 1, py::arg("s1") = 1,
           py::arg("p0") = 0, py::arg("p1") = 0, py::arg("d0") = 1, py::arg("d1") = 1);
+    m.def("conv2d_tiled", &conv2d_tiled, py::arg("a"), py::arg("b"), py::arg("s0") = 1,
+          py::arg("s1") = 1, py::arg("p0") = 0, py::arg("p1") = 0, py::arg("d0") = 1,
+          py::arg("d1") = 1, py::arg("n_tiles") = 0);
     m.def("conv2d_dw", &conv2d_dw, py::arg("a"), py::arg("b"), py::arg("s0") = 1,
           py::arg("s1") = 1, py::arg("p0") = 0, py::arg("p1") = 0, py::arg("d0") = 1,
           py::arg("d1") = 1);

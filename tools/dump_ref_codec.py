@@ -42,6 +42,9 @@ def main():
     for i, blk in enumerate(model.decoder[0].convnext):
         hs.append(blk.register_forward_hook(
             lambda mod, inp, out, i=i: blocks.__setitem__(i, out.detach())))
+    finln = {}
+    hs.append(model.decoder[0].final_layer_norm.register_forward_hook(
+        lambda mod, inp, out: finln.__setitem__(0, out.detach())))
     with torch.no_grad():
         quant = model.quantizer.vq2emb(codes.unsqueeze(0))     # [1, 1024, T]
         dec = model.decoder(quant)                             # [1, T, 1024]
@@ -62,6 +65,7 @@ def main():
     save("codec_quant.npy", quant)
     save("codec_dec.npy", dec)
     save("codec_xr.npy", xr)
+    save("codec_finln.npy", finln[0])
     for i in sorted(blocks):
         save(f"codec_blk{i}.npy", blocks[i])
     print("wrote codec_codes/quant/dec/xr.npy ->", OUT)

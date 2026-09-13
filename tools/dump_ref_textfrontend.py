@@ -34,7 +34,7 @@ CHAR_REP_MAP = {
 }
 CLEAN_PATTERN = re.compile("|".join(re.escape(p) for p in CHAR_REP_MAP.keys()))
 
-MODEL_DIR = os.path.join(ROOT, "移植参考", "model", "index2.5")
+MODEL_DIR = os.path.join(ROOT, "model", "indextts2.5")
 OUT = os.path.join(ROOT, "data", "indextts_ref", "textfrontend_ref.json")
 
 ENC = get_encoding("multilingual_zh_ja_yue_char_del", 99, MODEL_DIR)

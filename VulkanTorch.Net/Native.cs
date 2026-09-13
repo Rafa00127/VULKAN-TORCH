@@ -27,6 +27,7 @@ internal static class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_memory_tensor(IntPtr m, long[] shape, int ndim, int dtype, IntPtr data, UIntPtr bytes, out IntPtr tensor);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_graph_new(IntPtr rt, IntPtr device);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_graph_new_n(IntPtr rt, IntPtr device, UIntPtr maxNodes);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_free(IntPtr g);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_enter(IntPtr g);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_exit(IntPtr g);
@@ -62,6 +63,13 @@ internal static class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_reshape(IntPtr a, long[] shape, int ndim);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_repeat(IntPtr a, long[] shape, int ndim);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_gelu(IntPtr a);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_gelu_erf(IntPtr a);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_conv2d_dw(IntPtr a, IntPtr b, int s0, int s1, int p0, int p1, int d0, int d1);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_conv_transpose_2d(IntPtr a, IntPtr b, int stride);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_pool_2d(IntPtr a, int op, int k0, int k1, int s0, int s1, float p0, float p1);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_upsample(IntPtr a, int scaleFactor, int mode);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_pad(IntPtr a, int p0, int p1, int p2, int p3);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_clamp(IntPtr a, float minV, float maxV);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_relu(IntPtr a);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_sigmoid(IntPtr a);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_exp(IntPtr a);

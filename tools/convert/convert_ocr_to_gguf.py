@@ -16,7 +16,7 @@ Conv weights are written **as-is** (PyTorch ``[OC, IC, KH, KW]``): ggml reads
 ``ggml_conv_2d`` wants. Same duality the Higgs/IndexTTS converters rely on.
 
     python tools/convert_ocr_to_gguf.py --dry-run
-    python tools/convert_ocr_to_gguf.py            # writes data/ocr/*.gguf
+    python tools/convert_ocr_to_gguf.py            # writes model/ppocrv6/gguf/*.gguf
 """
 import argparse
 import json
@@ -133,7 +133,7 @@ def convert(kind, dry_run, outtype="f32"):
         return 0
 
     from gguf import GGUFWriter, GGMLQuantizationType
-    out_dir = os.path.join(ROOT, "data", "ocr")
+    out_dir = os.path.join(ROOT, "model", "ppocrv6", "gguf")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, gguf_name)
     w = GGUFWriter(out_path, arch="ppocrv6")

@@ -76,6 +76,10 @@ int vt_memory_tensor(void* m, const int64_t* shape, int ndim, int dtype, const v
 void* vt_graph_new(void* rt, void* device) {
     return new (std::nothrow) Graph(*static_cast<Runtime*>(rt), *static_cast<Device*>(device));
 }
+void* vt_graph_new_n(void* rt, void* device, size_t max_nodes) {
+    return new (std::nothrow) Graph(*static_cast<Runtime*>(rt), *static_cast<Device*>(device),
+                                    max_nodes);
+}
 void vt_graph_free(void* g) { delete static_cast<Graph*>(g); }
 void vt_graph_enter(void* g) { static_cast<Graph*>(g)->enter(); }
 void vt_graph_exit(void* g) { static_cast<Graph*>(g)->exit(); }
@@ -212,6 +216,10 @@ void* vt_conv1d(void* x, void* w, int stride, int pad, int dil) {
 }
 void* vt_conv2d(void* a, void* b, int s0, int s1, int p0, int p1, int d0, int d1) {
     return unwrap(conv2d(wrap(a), wrap(b), s0, s1, p0, p1, d0, d1));
+}
+void* vt_conv2d_tiled(void* a, void* b, int s0, int s1, int p0, int p1, int d0, int d1,
+                      int n_tiles) {
+    return unwrap(conv2d_tiled(wrap(a), wrap(b), s0, s1, p0, p1, d0, d1, n_tiles));
 }
 void* vt_conv1d_dw(void* x, void* w, int stride, int pad, int dil) {
     return unwrap(conv1d_dw(wrap(x), wrap(w), stride, pad, dil));

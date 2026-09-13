@@ -2,11 +2,24 @@
 
 ## 总结和碎碎念
 
-总之项目使用了ggml-vulkan的部分，做了两个类似torch的库（python和c#各一个），可以用于移植一些小模型玩玩，因为是vulkan做后端，所以全平台支持，在示例中就搞了两个tts小模型的移植示范，可以参考也可以自己拿来玩。
+使用了ggml-vulkan的部分作为核心，实现两个类似torch的库（python和c#各一个）。
 
-对的对的，这算是重复造了两次轮子。
+你可能觉得——“咦，这玩意儿，又不ggml又不pytorch，那不纯区嘛”
 
-接下来请小肥鱼来讲解一下怎么使用这两个库吧
+你可能还真没错，但换个角度想，它又轻（50mb左右）又快（ggml集美底子好），拿来快速移植小模型还不用像ggml那样写c++，那不又神了嘛。
+
+总之它可以用于移植一些小模型玩玩，因为是vulkan做后端，所以全平台支持，这里提供了两个库，一个python库vulkantorch，一个c#库VulkanTorch.net。
+
+这俩功能差不多，但仓库里用他们移植的小模型不一样。
+
+废话，我不想再重复造了论轮子了，token太多没地方花可以喂肥鱼。
+
+在示例中就搞了两个tts模型和一个ocr模型（paddle）的移植示范，可以参考也可以自己拿来玩。
+
+对的对的，这还是重复造了两次轮子用于演示某TTS模型的推理作为演示。
+
+
+接下来请小肥鱼来讲解一下怎么来玩这两个库吧
 
 ---
 
@@ -68,6 +81,7 @@ vulkantorch/                  Python 库（__init__.py + pybind 源码 + 编译�
 VulkanTorch.Net/              C# 库（P/Invoke 封装）
 example/python/higgstts_py/   Python 示例：HiggsTTS 移植 + CLI
 example/CSharp/HiggsTts.Net/  C# 示例：HiggsTTS 移植 + CLI
+example/CSharp/IndexTts.Net/  C# 示例：IndexTTS 2.5 移植 + CLI（零样本克隆 + 情绪控制）
 example/CSharp/VulkanTorch.Test/   冒烟测试（matmul / conv1d）
 example/CSharp/VulkanTorch.Bench/  三语言基准之一
 data/ref_audio/               参考音频 + tokenizer（已入库）
@@ -168,8 +182,9 @@ for i in range(10):
 
 ```bat
 python example\python\higgstts_py\cli.py ^
-  --model D:\models\HiggsTTS3.gguf ^
+  --model path/to/HiggsTTS3.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
+  --ref-wav data/ref_audio/melinaref_24k.wav ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"
 ```
 
@@ -341,6 +356,42 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 两者数值上对齐：DAC 解码和 AR 的 logits **逐位一致**，tokenizer 输出也一致；`encode_ref` 用同一个重采样器时 97% 的帧相同（差异只来自 Python 用 librosa、C# 用自带 Kaiser 重采样，听感无差别）。速度约 **0.2~0.3 RTF**。
 
 ---
+
+## 示例模型：IndexTTS 2.5
+
+只做了 C# 端（成果要直接给 WPF 听书应用用）。零样本音色克隆 + 情绪控制，中/英/日/西等 99 种语言。
+整条链路（文本前端 → GPT-2 AR → 语义 codec → s2mel/CFM → BigVGAN，外加参考音频的
+fbank/Wav2Vec2-BERT/CAMPPlus）都在 [example/CSharp/IndexTts.Net/](example/CSharp/IndexTts.Net/) 里，自包含。
+
+```
+参考音频 ─┬─ Kaldi fbank ─► CAMPPlus ──────────────────────► style
+          ├─ Kaldi fbank ─► Wav2Vec2-BERT ─► spk_cond ─┐
+          └─ 22.05k mel ───────────────────────────────┤
+                                                       ▼
+文本 ─► 分词/归一化/分段 ─► GPT-2 AR ─► codec ─► length_regulator ─► CFM(25 步 Euler+CFG) ─► BigVGAN ─► wav
+```
+
+```bat
+dotnet build example\CSharp\IndexTts.Net -c Release
+
+example\CSharp\IndexTts.Net\bin\Release\net10.0\IndexTts.Net.exe synth ^
+  --model model\indextts2.5\indextts2.5.f16.gguf ^
+  --ref-wav data\ref_audio\melinaref_24k.wav ^
+  --text "大家好，这是一个测试。" --out data\indextts\out.wav
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--model` | **必填**，IndexTTS 2.5 的 GGUF（4 个权重文件用 `tools/convert/convert_index_tts2_to_gguf.py` 转，约 3.3GB） |
+| `--ref-wav` | 参考音频（音色来源），默认 `data/ref_audio/melinaref_24k.wav` |
+| `--text` | 要合成的文本，可加 `<字\|读音>` 发音标注 |
+| `--emo` | 情绪权重，如 `--emo "happy=0.6,calm=0.4"`（8 种：happy/angry/sad/afraid/disgusted/melancholic/surprised/calm） |
+| `--lang` `--out` `--seed` `--max-steps` | 语言 / 输出 / 采样种子 / 步数上限 |
+| `--top-p` `--top-k` `--temperature` `--rep-penalty` | 采样参数（默认 0.8 / 30 / 0.8 / 10） |
+| `--num-beams` | 束搜索宽度，默认 1 |
+| `--cfg-rate` `--diffusion-steps` | CFM 的 CFG 强度和扩散步数（默认 0.7 / 25） |
+| `--duration-factor` | 语速/时长缩放 |
+| `--no-graph-cache` | 关掉 AR 的图缓存（A/B 用） |
 
 ## 许可
 

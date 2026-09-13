@@ -45,6 +45,8 @@ def main():
     images = a.images or DEFAULT_IMAGES
     os.makedirs(a.out, exist_ok=True)
 
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import segment
     from ocr_py.ocr import Ocr
     print("loading port models...")
     t0 = time.perf_counter()
@@ -57,7 +59,7 @@ def main():
         print(f"\n=== {name} ===")
 
         t0 = time.perf_counter()
-        port_text = ocr.read_page(img)
+        port_text = segment.page_text(ocr, img)
         t_port = time.perf_counter() - t0
         port_txt = os.path.join(a.out, f"{name}.port.txt")
         with open(port_txt, "w", encoding="utf-8") as f:

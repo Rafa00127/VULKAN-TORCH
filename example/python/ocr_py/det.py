@@ -16,7 +16,7 @@ _RATIOS = [("long", 7, 3), ("mid", 5, 2), ("short", 3, 1)]
 
 def _conv(x, w, name, p, pw=None):
     b = w[name + ".bias"] if (name + ".bias") in w else None
-    return N.conv(x, w[name + ".weight"], b, p=p, pw=pw)
+    return N.conv_tiled(x, w[name + ".weight"], b, p=p, pw=pw)
 
 
 def _intraclass(x, w, p):

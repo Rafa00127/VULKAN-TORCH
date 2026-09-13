@@ -49,7 +49,7 @@ def page_text(model, data, use_det):
             h, w = a.shape[:2]
             a = np.array(Image.fromarray(a).resize((w * 2, h * 2), Image.NEAREST))
         if use_det:
-            lines.append("".join(_texts(model.predict(a))))
+            lines.append("\n".join(_texts(model.predict(a))))
         else:
             res = model.predict(a)
             txt = ""

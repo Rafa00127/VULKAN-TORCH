@@ -66,7 +66,8 @@ public sealed class SemanticCodec : IDisposable
 
     /// <summary>The decode chain's checkpoints: quantized embedding, the Vocos blocks, and the
     /// final upsampled features — for stage-wise validation against the reference.</summary>
-    public (Tensor Quant, List<Tensor> Blocks, Tensor Dec, Tensor Rec) DecodeStages(Graph g, Tensor codes)
+    public (Tensor Quant, Tensor FinLn, List<Tensor> Blocks, Tensor Dec, Tensor Rec) DecodeStages(
+        Graph g, Tensor codes)
     {
         var emb = Ops.GetRows(_w[P + "quantizer.quantizers.0.codebook.weight"], codes);  // [T, 8]
         var q = Ops.Add(Ops.Conv1d(emb, _outProjW, 1, 0, 1),
@@ -79,7 +80,7 @@ public sealed class SemanticCodec : IDisposable
                                         new long[] { t, 2, Dim }),
                              new long[] { 2 * t, Dim });
         var rec = Ops.Add(Ops.Conv1d(xi, _w[P + "up.weight"], 1, 1, 1), _w[P + "up.bias"]);  // [2T, 1024]
-        return (q, blocks, lin, rec);
+        return (q, final, blocks, lin, rec);
     }
 
     /// <summary>VocosBackbone with the per-block outputs exposed for stage-wise validation.</summary>
@@ -95,7 +96,7 @@ public sealed class SemanticCodec : IDisposable
             var h = Ops.Add(Ops.Conv1dDw(x, _w[b + "dwconv.weight"], 1, 3, 1), _w[b + "dwconv.bias"]);
             h = Norm(h, $"decoder.0.convnext.{i}.norm");
             h = Ops.Add(Ops.Linear(h, _w[b + "pwconv1.weight"]), _w[b + "pwconv1.bias"]);
-            h = Ops.Gelu(h);
+            h = Ops.GeluErf(h);
             h = Ops.Add(Ops.Linear(h, _w[b + "pwconv2.weight"]), _w[b + "pwconv2.bias"]);
             h = Ops.Mul(h, _w[b + "gamma"]);
             x = Ops.Add(x, h);

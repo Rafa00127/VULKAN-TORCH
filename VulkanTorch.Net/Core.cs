@@ -93,6 +93,11 @@ public sealed class Graph : IDisposable
 {
     internal IntPtr Handle { get; private set; }
 
+    /// <summary>Graph with an explicit node capacity. The default (16384) is enough for small
+    /// models but NOT for wide vocoders — exceeding it silently corrupts memory.</summary>
+    public Graph(Runtime rt, Device device, ulong maxNodes)
+        => Handle = Native.vt_graph_new_n(rt.H, device.Handle, (UIntPtr)maxNodes);
+
     public Graph(Runtime rt, Device device) => Handle = Native.vt_graph_new(rt.H, device.Handle);
 
     /// <summary>Number of nodes in the captured graph (introspection).</summary>

@@ -52,7 +52,7 @@ def _svtr_block(x, w, p, trace=None, d=0):
     return mt.add(r, y)
 
 
-def forward(x, w, trace=None):
+def _logits(x, w, trace=None):
     stages = backbone.forward(x, w, backbone.REC_BLOCKS)
     if trace is not None:
         trace["bb_last"] = stages[-1]
@@ -89,4 +89,17 @@ def forward(x, w, trace=None):
     logits = N.linear_bias(seq, w["head.head.weight"], w["head.head.bias"])   # [W2,18710]
     if trace is not None:
         trace["logits"] = logits
-    return mt.soft_max(logits)
+    return logits
+
+
+def forward(x, w, trace=None):
+    return mt.soft_max(_logits(x, w, trace))
+
+
+def forward_ids(x, w):
+    """CTC argmax ids [T,1] (I32) straight from the logits.
+
+    Identical decode to ``argmax(forward(x, w))`` (softmax is monotonic), but the
+    graph's output is T ints instead of a T×C float map — so only ~4·T bytes cross
+    PCIe instead of 4·T·C (17 MB on a wide line). This is the production path."""
+    return mt.argmax(_logits(x, w))

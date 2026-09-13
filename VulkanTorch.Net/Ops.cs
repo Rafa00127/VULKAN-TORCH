@@ -24,6 +24,8 @@ public static class Ops
     public static Tensor Reshape(Tensor a, long[] shape) => new(Native.vt_reshape(a.Handle, shape, shape.Length));
     public static Tensor Repeat(Tensor a, long[] shape) => new(Native.vt_repeat(a.Handle, shape, shape.Length));
     public static Tensor Gelu(Tensor a) => new(Native.vt_gelu(a.Handle));
+    /// <summary>Exact erf GELU (matches torch nn.GELU()); vt_gelu is the tanh approximation.</summary>
+    public static Tensor GeluErf(Tensor a) => new(Native.vt_gelu_erf(a.Handle));
     public static Tensor Relu(Tensor a) => new(Native.vt_relu(a.Handle));
     public static Tensor Sigmoid(Tensor a) => new(Native.vt_sigmoid(a.Handle));
     public static Tensor Exp(Tensor a) => new(Native.vt_exp(a.Handle));
@@ -73,6 +75,19 @@ public static class Ops
         => new(Native.vt_conv1d(x.Handle, w.Handle, stride, pad, dilation));
     public static Tensor Conv1dDw(Tensor x, Tensor w, int stride = 1, int pad = 0, int dilation = 1)
         => new(Native.vt_conv1d_dw(x.Handle, w.Handle, stride, pad, dilation));
+    public static Tensor Conv2dDw(Tensor a, Tensor b, int s0 = 1, int s1 = 1, int p0 = 0, int p1 = 0,
+        int d0 = 1, int d1 = 1)
+        => new(Native.vt_conv2d_dw(a.Handle, b.Handle, s0, s1, p0, p1, d0, d1));
+    public static Tensor ConvTranspose2d(Tensor a, Tensor b, int stride)
+        => new(Native.vt_conv_transpose_2d(a.Handle, b.Handle, stride));
+    public static Tensor Pool2d(Tensor a, int op, int k0, int k1, int s0, int s1, float p0, float p1)
+        => new(Native.vt_pool_2d(a.Handle, op, k0, k1, s0, s1, p0, p1));
+    public static Tensor Upsample(Tensor a, int scaleFactor, int mode = 0)
+        => new(Native.vt_upsample(a.Handle, scaleFactor, mode));
+    public static Tensor Pad(Tensor a, int p0, int p1, int p2 = 0, int p3 = 0)
+        => new(Native.vt_pad(a.Handle, p0, p1, p2, p3));
+    public static Tensor Clamp(Tensor a, float minV, float maxV)
+        => new(Native.vt_clamp(a.Handle, minV, maxV));
     public static Tensor Conv2d(Tensor a, Tensor b, int s0 = 1, int s1 = 1, int p0 = 0, int p1 = 0,
         int d0 = 1, int d1 = 1)
         => new(Native.vt_conv2d(a.Handle, b.Handle, s0, s1, p0, p1, d0, d1));

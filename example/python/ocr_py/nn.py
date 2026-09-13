@@ -20,6 +20,13 @@ def conv(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):
     return _cadd(y, b, w.shape[0]) if b is not None else y
 
 
+def conv_tiled(x, w, b, sh=1, sw=1, p=1, d=1, pw=None, n_tiles=0):
+    """conv2d with the output width tiled so the im2col stays small (n_tiles=0: auto)."""
+    pw = p if pw is None else pw
+    y = mt.conv2d_tiled(w, x, sw, sh, pw, p, d, d, n_tiles)
+    return _cadd(y, b, w.shape[0]) if b is not None else y
+
+
 def conv_dw(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):
     pw = p if pw is None else pw
     y = mt.conv2d_dw(w, x, sw, sh, pw, p, d, d)

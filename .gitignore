@@ -7,6 +7,7 @@ __pycache__/
 .vscode/
 移植参考/
 
+CLAUDE.md
 # python extension emitted into the package
 vulkantorch/_vulkantorch*.pyd
 
@@ -16,7 +17,14 @@ data/*
 !data/ref_audio/
 
 # converted model weights (GGUF) — regenerate with tools/convert/convert_*.py
-model/
+# (exclude the contents, not the dir: git cannot re-include a file under an
+#  excluded directory)
+model/*
+# ...except the IndexTTS tokenizer: needed at runtime and small (~900 KB),
+# same treatment as data/ref_audio/higgs_tts_v3_tokenizer.json
+!model/indextts2.5/
+model/indextts2.5/*
+!model/indextts2.5/multilingual_zh_ja_yue_char_del.tiktoken
 
 # OCR scratch: reference tensors/text, transcripts (models live in model/)
 data/ocr/

@@ -371,9 +371,11 @@ Tensor conv1d(const Tensor& x, const Tensor& w, int stride, int pad, int dilatio
     Graph& g = cur();
     ggml_context* ctx = g.ctx();
     // x: [T, Cin] (ne=[Cin, T]); w: [Cout, Cin, K] (ne=[K, Cin, Cout]).
-    const int64_t K = w.shape()[2];
-    const int64_t Cin = w.shape()[1];
-    const int64_t Cout = w.shape()[0];
+    // Read ne[] directly: Tensor::shape() collapses size-1 dims, so a 1-channel conv
+    // (Cout == 1) reports rank 2 and loses K.
+    const int64_t K = w.raw()->ne[0];
+    const int64_t Cin = w.raw()->ne[1];
+    const int64_t Cout = w.raw()->ne[2];
     ggml_tensor* cols = ggml_im2col_rafa(ctx, x.raw(), static_cast<int>(K), stride, pad, dilation,
                                          GGML_TYPE_F32);
     ggml_tensor* w2d = ggml_reshape_2d(ctx, w.raw(), Cin * K, Cout);
@@ -387,6 +389,56 @@ Tensor conv2d(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, 
     ggml_tensor* r = ggml_conv_2d(g.ctx(), a.raw(), b.raw(), s0, s1, p0, p1, d0, d1);
     g.add(r);
     return Tensor(r, &g);
+}
+
+Tensor conv2d_tiled(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0,
+                    int d1, int n_tiles) {
+    Graph& g = cur();
+    ggml_context* ctx = g.ctx();
+    ggml_tensor* k = a.raw();
+    ggml_tensor* bt = b.raw();
+    const int64_t IW = bt->ne[0], IH = bt->ne[1], IC = bt->ne[2], N = bt->ne[3];
+    const int64_t KW = k->ne[0], KH = k->ne[1];
+    const int64_t K_eff = (KW - 1) * d0 + 1;
+    const int64_t OW = (IW + 2 * p0 - K_eff) / s0 + 1;
+
+    // auto tile count: keep each chunk's im2col (KH*KW*IC * OH*OW_tile floats) small
+    if (n_tiles <= 0) {
+        const int64_t per_col = KH * KW * IC * IH * (int64_t)sizeof(float);
+        const int64_t budget = 256LL << 20;  // ~256 MiB per chunk's im2col
+        n_tiles = (int)((OW * per_col + budget - 1) / budget);
+        if (n_tiles < 1) n_tiles = 1;
+    }
+    if (n_tiles <= 1 || OW <= 0) return conv2d(a, b, s0, s1, p0, p1, d0, d1);
+
+    // xp: input zero-padded left+right in W -> [IW + 2*p0, IH, IC, N]; conv then uses p=0
+    ggml_tensor* xp = bt;
+    if (p0 > 0) {
+        // zeros of shape [p0, IH, IC, N] = scale(view(bt), 0) (view must be made contiguous first)
+        ggml_tensor* zw = ggml_cont(ctx, ggml_view_4d(ctx, bt, p0, IH, IC, N, bt->nb[1],
+                                                      bt->nb[2], bt->nb[3], 0));
+        ggml_tensor* z = ggml_scale(ctx, zw, 0.0f);
+        xp = ggml_pad(ctx, ggml_concat(ctx, z, bt, 0), p0, 0, 0, 0);
+        g.add(xp);
+    }
+
+    const int64_t per = (OW + n_tiles - 1) / n_tiles;
+    ggml_tensor* out = nullptr;
+    for (int64_t ow0 = 0; ow0 < OW; ow0 += per) {
+        const int64_t ow1 = std::min(ow0 + per, OW);
+        const int64_t in_w = (ow1 - ow0 - 1) * s0 + K_eff;   // slice width needed
+        ggml_tensor* bs = ggml_cont(ctx, ggml_view_4d(ctx, xp, in_w, IH, IC, N, xp->nb[1],
+                                                      xp->nb[2], xp->nb[3],
+                                                      (size_t)(ow0 * s0) * xp->nb[0]));
+        ggml_tensor* c = ggml_conv_2d(ctx, k, bs, s0, s1, 0, p1, d0, d1);
+        if (out == nullptr) {
+            out = c;
+        } else {
+            out = ggml_concat(ctx, out, c, 0);
+        }
+        g.add(out);
+    }
+    return Tensor(out, &g);
 }
 
 Tensor conv1d_dw(const Tensor& x, const Tensor& w, int stride, int pad, int dilation) {

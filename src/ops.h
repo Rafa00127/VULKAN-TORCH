@@ -95,6 +95,13 @@ Tensor conv1d_dw(const Tensor& x, const Tensor& w, int stride, int pad, int dila
 // conv2d (stock ggml_conv_2d). a (kernel): PT [OC, IC, KH, KW]; b (data): PT
 //   [N, IC, IH, IW] -> PT [N, OC, OH, OW].
 Tensor conv2d(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0, int d1);
+// conv2d with the output width split into ``n_tiles`` chunks so each chunk's im2col
+// intermediate stays small (ggml_conv_2d materialises KH*KW*IC * OH*OW_tile). Exact
+// same result as conv2d. ``n_tiles <= 0`` picks a count to keep each im2col under
+// ~1.2 GiB. Use for large-kernel convs at high resolution, where the whole im2col
+// would exceed the backend's per-buffer limit (e.g. Vulkan's 2 GiB).
+Tensor conv2d_tiled(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0,
+                    int d1, int n_tiles = 0);
 // conv_transpose_1d via w_perm + matmul + col2im_1d. w_perm is the pre-permuted
 //   weight [K*OC, IC] (see convert_model: t.reshape(IC, K*OC).T). x:[T, Cin] ->
 //   PT [OC, T_out]. The hand-written ggml_conv_transpose_1d op is numerically

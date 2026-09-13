@@ -1,27 +1,36 @@
-"""Segmentation-based PP-OCRv6 OCR, mirroring ocr_server_gui.py:gif_to_text.
+"""PP-OCRv6 recognition / detection on vulkan-torch.
 
     ocr = Ocr()
-    text = ocr.read_page("chapter.gif")   # invert -> line bands -> per-line det+rec
+    text = ocr.read_line(rgb)              # one already-cropped line -> text
+    boxes = ocr.read_line(rgb, det=True)   # full det+rec on a region
+
+Models load from `<repo>/model/ppocrv6/gguf/` unless overridden — pass
+`Ocr(model_dir=...)` (or `rec_path=`/`det_path=`/`dict_path=`), or set the
+`OCR_MODEL_DIR`/`OCR_PRECISION`/`OCR_REC_GGUF`/`OCR_DET_GGUF`/`OCR_DICT` env vars
+(see ocr_py/_paths.py). Only the rec GGUF + dict are needed for `det=False`.
+
+Page segmentation (how a whole chapter image is cut into lines) is app-specific and
+lives with the caller, not here.
 """
+import os
+
 import numpy as np
 import cv2
-from PIL import Image, ImageOps
 
 import vulkantorch as mt
 
 from ocr_py import det, rec, weights, postproc, _paths
 
-# gif_to_text segmentation constants
-LINE_TOP, LINE_GAP, LINE_H, CUT_PINYIN = 10, 38, 28, 10
-# det preprocess
-DET_LIMIT, DET_MAX_SIDE = 736, 4000
+# det preprocess — paddlex/configs/pipelines/OCR.yaml (SubModules.TextDetection)
+# overrides the model's own inference.yml: limit_side_len 64 (not 736), min.
+DET_LIMIT, DET_MAX_SIDE = 64, 4000
 DET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)      # BGR order (matches inference.yml)
 DET_STD = np.array([0.229, 0.224, 0.225], np.float32)
 REC_H, REC_W = 48, 320
 
 
 def det_preprocess(bgr):
-    """bgr uint8 HWC -> ([3,H,W], ratio_h, ratio_w); DetResizeForTest(min 736, cap 4000)."""
+    """bgr uint8 HWC -> ([3,H,W], ratio_h, ratio_w); DetResizeForTest(64, min, 4000)."""
     h, w = bgr.shape[:2]
     ratio = DET_LIMIT / min(h, w) if min(h, w) < DET_LIMIT else 1.0
     rh, rw = int(h * ratio), int(w * ratio)
@@ -50,32 +59,68 @@ def rec_preprocess(bgr):
 
 
 class Ocr:
-    def __init__(self, device=None):
+    def __init__(self, device=None, *, model_dir=None, precision=None,
+                 rec_path=None, det_path=None, dict_path=None):
+        """Paths resolve in order: explicit arg > env var > repo default.
+
+        ``model_dir`` points at any directory holding the standard filenames
+        (``ppocrv6_rec.<precision>.gguf``, ``ppocrv6_det.f32.gguf``,
+        ``ppocrv6_dict.txt``) — see ocr_py/_paths.py. The detection model is loaded
+        lazily, so a rec-only install needs only the rec GGUF + dict."""
         self.rt = mt.Runtime()
         self.dev = device or self.rt.gpu()
-        self.wdet = weights.Weights(_paths.DET_GGUF, self.dev, arena_bytes=2 << 30)
-        self.wrec = weights.Weights(_paths.REC_GGUF, self.dev)
-        with open(_paths.DICT_TXT, encoding="utf-8") as f:
+        prec = precision or _paths.PRECISION
+        if model_dir:
+            rec_path = rec_path or os.path.join(model_dir, f"ppocrv6_rec.{prec}.gguf")
+            det_path = det_path or os.path.join(model_dir, "ppocrv6_det.f32.gguf")
+            dict_path = dict_path or os.path.join(model_dir, "ppocrv6_dict.txt")
+        self._rec_path = rec_path or _paths.REC_GGUF
+        self._det_path = det_path or _paths.DET_GGUF
+        self._dict_path = dict_path or _paths.DICT_TXT
+        for p in (self._rec_path, self._dict_path):
+            if not os.path.isfile(p):
+                raise FileNotFoundError(
+                    f"OCR model not found: {p}\n"
+                    "Put the GGUF under model/ppocrv6/gguf/, or set OCR_MODEL_DIR, or "
+                    "pass model_dir=/rec_path= to Ocr().")
+        self.wrec = weights.Weights(self._rec_path, self.dev)
+        with open(self._dict_path, encoding="utf-8") as f:
             self.chars = f.read().split("\n")
+        self._wdet = None
         self._cache = {}                    # (net, shape) -> (graph, x, out, mem), bounded
+
+    @property
+    def wdet(self):
+        """Loaded on first det use (optional — the production path is rec-only)."""
+        if self._wdet is None:
+            self._wdet = weights.Weights(self._det_path, self.dev, arena_bytes=2 << 30)
+        return self._wdet
 
     _CACHE_MAX = 24
 
-    def _run(self, net, arr):
+    def _run(self, net, arr, dtype=np.float32):
         """Device-resident input (not g.input(), which pins to CPU) + a small shape
         cache. Capturing a graph is cheap (~2-3 ms) so this only avoids the CPU
         round-trip and the repeated scheduler alloc; the cache is bounded so many
-        distinct rec widths can't blow GPU memory."""
+        distinct rec widths can't blow GPU memory.
+
+        ``net`` picks the graph: "det", "rec" (softmax probs) or "rec_ids" (CTC
+        argmax ids — the production decode; ~18710x less data pulled off the GPU)."""
         arr = np.ascontiguousarray(arr, np.float32)
         key = (net, arr.shape)
-        fn, w = (det.forward, self.wdet) if net == "det" else (rec.forward, self.wrec)
+        if net == "det":
+            fn, w = det.forward, self.wdet
+        elif net == "rec_ids":
+            fn, w = rec.forward_ids, self.wrec
+        else:
+            fn, w = rec.forward, self.wrec
 
         ent = self._cache.get(key)
         if ent is not None:
             g, x, out, mem = ent
             g.set_input(x, arr.tobytes())
             g.compute_static()
-            return np.frombuffer(out.to_bytes(), np.float32).reshape(list(out.shape))
+            return np.frombuffer(out.to_bytes(), dtype).reshape(list(out.shape))
 
         mem = mt.Memory(self.dev, arr.nbytes)              # outside the capture
         x = mem.tensor(list(arr.shape), arr.tobytes())
@@ -98,9 +143,9 @@ class Ocr:
                 self._cache[key] = (g, x, out, mem)
                 g.set_input(x, arr.tobytes())
                 g.compute_static()
-                return np.frombuffer(out.to_bytes(), np.float32).reshape(list(out.shape))
+                return np.frombuffer(out.to_bytes(), dtype).reshape(list(out.shape))
 
-        return np.frombuffer(out.to_bytes(), np.float32).reshape(list(out.shape))
+        return np.frombuffer(out.to_bytes(), dtype).reshape(list(out.shape))
 
     def read_line(self, rgb, det=False):
         """rgb uint8 HWC (as passed to PaddleOCR, i.e. BGR-interpreted) -> text.
@@ -110,8 +155,8 @@ class Ocr:
         workflow (lines are pre-cut by the segmenter)."""
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])
         if not det:
-            logits = self._run("rec", rec_preprocess(bgr))
-            return "".join(ch for ch, _ in postproc.ctc_decode(logits, self.chars))
+            ids = self._run("rec_ids", rec_preprocess(bgr), np.int32)
+            return postproc.ctc_decode_ids(ids, self.chars)
         det_in, rh, rw = det_preprocess(bgr)
         prob = self._run("det", det_in)
         texts = []
@@ -119,34 +164,6 @@ class Ocr:
             crop = postproc.crop_quad(bgr, box)
             if crop is None:
                 continue
-            logits = self._run("rec", rec_preprocess(crop))
-            texts.append("".join(ch for ch, _ in postproc.ctc_decode(logits, self.chars)))
-        return "".join(texts)
-
-    @staticmethod
-    def segment_lines(src):
-        """Yield line crops (RGB uint8) following gif_to_text.
-
-        ``src`` may be a path or an already-open PIL image (e.g. from GIF bytes)."""
-        img = src if isinstance(src, Image.Image) else Image.open(src)
-        arr = np.array(ImageOps.invert(img.convert("RGB")))
-        H = arr.shape[0]
-        for i in range((H - LINE_TOP) // LINE_GAP):
-            y0 = LINE_TOP + i * LINE_GAP
-            y1, y2 = y0 + CUT_PINYIN, y0 + LINE_H
-            if y2 > H:
-                break
-            crop = Image.fromarray(arr[y1:y2, :, :])
-            carr = np.array(crop.convert("L"))
-            cols = np.where((carr > 128).sum(0) > 0)[0]
-            if len(cols):
-                x1, x2 = int(cols[0]), int(cols[-1]) + 1
-                crop = crop.crop((max(0, x1 - 4), 0, min(crop.width, x2 + 4), crop.height))
-            a = np.array(crop)
-            if a.shape[1] < 200:
-                h, w = a.shape[:2]
-                a = np.array(Image.fromarray(a).resize((w * 2, h * 2), Image.NEAREST))
-            yield a
-
-    def read_page(self, src, det=False):
-        return "\n".join(self.read_line(a, det=det) for a in self.segment_lines(src))
+            ids = self._run("rec_ids", rec_preprocess(crop), np.int32)
+            texts.append(postproc.ctc_decode_ids(ids, self.chars))
+        return "\n".join(texts)

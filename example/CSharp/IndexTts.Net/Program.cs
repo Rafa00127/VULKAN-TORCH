@@ -20,6 +20,20 @@ internal static class Program
         throw new DirectoryNotFoundException("repo root (CMakeLists.txt + src/) not found above the exe");
     }
 
+    internal static void SaveWav(string path, float[] s, int sampleRate)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        using var w = new NAudio.Wave.WaveFileWriter(path, new NAudio.Wave.WaveFormat(sampleRate, 16, 1));
+        var bytes = new byte[s.Length * 2];
+        for (int i = 0; i < s.Length; i++)
+        {
+            short pcm = (short)Math.Round(Math.Clamp(s[i], -1f, 1f) * 32767f);
+            bytes[2 * i] = (byte)pcm;
+            bytes[2 * i + 1] = (byte)(pcm >> 8);
+        }
+        w.Write(bytes, 0, bytes.Length);
+    }
+
     internal static void Report(string tag, Npy want, float[] got)
     {
         int n = (int)Math.Min(want.Numel, got.Length);
@@ -52,10 +66,12 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "synth") return Cli.Run(args);
+
         string mode = args.Length > 0 ? args[0] : "gpt2";
         string root = FindRoot();
         string refs = Path.Combine(root, "data", "indextts_ref");
-        string gguf = Path.Combine(root, "data", "indextts2.5.f16.gguf");
+        string gguf = Path.Combine(root, "model", "indextts2.5", "indextts2.5.f16.gguf");
 
         using var rt = new Runtime();
         var dev = rt.Gpu();
@@ -74,6 +90,14 @@ internal static class Program
         if (mode == "tok") return RunTok(refs);
         if (mode == "textfrontend") return RunTextFrontend(refs);
         if (mode == "codec") return RunCodec(rt, dev, refs, gguf);
+        if (mode == "lenreg") return RunLenReg(rt, dev, refs, gguf);
+        if (mode == "dit") return RunDit(rt, dev, refs, gguf);
+        if (mode == "cfm") return RunCfm(rt, dev, refs, gguf);
+        if (mode == "bigvgan") return RunBigVgan(rt, dev, refs, gguf);
+        if (mode == "refaudio") return RunRefAudio(refs);
+        if (mode == "campplus") return RunCampPlus(rt, dev, refs, gguf);
+        if (mode == "w2v") return RunW2v(rt, dev, refs, gguf);
+        if (mode == "bvup") return RunBvUp(rt, dev, refs, gguf);
         if (mode == "textnorm")
         {
             string p = args.Length > 1 ? args[1] : Path.Combine(root, "data", "_ref_textnorm", "ref.txt");
@@ -154,7 +178,7 @@ internal static class Program
     private static int RunTextFrontend(string refs)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        string vocab = Path.Combine(FindRoot(), "移植参考", "model", "index2.5",
+        string vocab = Path.Combine(FindRoot(), "model", "indextts2.5",
                                     "multilingual_zh_ja_yue_char_del.tiktoken");
         var tok = new IndexTokenizer(vocab);
         var front = new TextFrontend(tok);
@@ -228,8 +252,8 @@ internal static class Program
         using var g = new Graph(rt, dev);
         g.Enter();
         var codesT = g.InputI32(new long[] { codes.Length }, codes);
-        var (q, blocks, dec, rec) = codec.DecodeStages(g, codesT);
-        q.MarkOutput(); dec.MarkOutput(); rec.MarkOutput();
+        var (q, finln, blocks, dec, rec) = codec.DecodeStages(g, codesT);
+        q.MarkOutput(); finln.MarkOutput(); dec.MarkOutput(); rec.MarkOutput();
         foreach (var b in blocks) b.MarkOutput();
         Report("quant", wantQuant, q.ToFloats(g));
         for (int i = 0; i < blocks.Count; i++)
@@ -238,8 +262,233 @@ internal static class Program
             var want = Transpose1CT(Npy.Load(Path.Combine(refs, $"codec_blk{i}.npy")));
             Report($"blk{i}", want, blocks[i].ToFloats(g));
         }
+        Report("finln", Npy.Load(Path.Combine(refs, "codec_finln.npy")), finln.ToFloats(g));
         Report("dec", wantDec, dec.ToFloats(g));
         Report("xr", wantXr, rec.ToFloats(g));
+        g.Exit();
+        return 0;
+    }
+
+    /// <summary>Validate the s2mel length_regulator against the reference dump
+    /// (lr_proj / lr_up / lr_out .npy).</summary>
+    private static int RunLenReg(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var sInfer = Npy.Load(Path.Combine(refs, "lr_sinfer.npy"));     // [1, T, 1024]
+        int ylens = (int)Npy.Load(Path.Combine(refs, "lr_ylens.npy")).Data[0];
+        var wantProj = Npy.Load(Path.Combine(refs, "lr_proj.npy"));
+        var wantUp = Npy.Load(Path.Combine(refs, "lr_up.npy"));
+        var wantOut = Npy.Load(Path.Combine(refs, "lr_out.npy"));
+        int t = (int)sInfer.Shape[1];
+        Console.WriteLine($"ylens={ylens} T={t} out={string.Join("x", wantOut.Shape)}");
+
+        using var w = new GgufWeights(gguf, dev, new[] { "s2mel.length_regulator." });
+        var lr = new LengthRegulator(w);
+        using var g = new Graph(rt, dev);
+        g.Enter();
+        var x = g.Input(new long[] { t, 1024 }, sInfer.Data);
+        var proj = lr.Project(g, x);
+        var up = lr.Nearest(g, proj, t, ylens);
+        var outT = lr.Forward(g, x, ylens);
+        proj.MarkOutput(); up.MarkOutput(); outT.MarkOutput();
+        Report("proj", wantProj, proj.ToFloats(g));
+        Report("up", wantUp, up.ToFloats(g));
+        Report("out", wantOut, outT.ToFloats(g));
+        g.Exit();
+        return 0;
+    }
+
+    /// <summary>Validate the s2mel DiT estimator against the reference dump (dit_*.npy).</summary>
+    private static int RunDit(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var x = Transpose1CT(Npy.Load(Path.Combine(refs, "dit_x.npy")));            // [T, 80]
+        var promptX = Transpose1CT(Npy.Load(Path.Combine(refs, "dit_prompt_x.npy")));
+        var cond = Npy.Load(Path.Combine(refs, "dit_cond.npy"));                    // [1, T, 512]
+        var style = Npy.Load(Path.Combine(refs, "dit_style.npy"));                  // [1, 192]
+        var wantOut = Transpose1CT(Npy.Load(Path.Combine(refs, "dit_out.npy")));    // [T, 80]
+        float t = Npy.Load(Path.Combine(refs, "dit_t.npy")).Data[0];
+        int n = (int)x.Shape[0];
+        Console.WriteLine($"T={n} t={t} out={string.Join("x", wantOut.Shape)}");
+
+        using var w = new GgufWeights(gguf, dev, new[] { "s2mel.cfm.estimator." });
+        using var dit = new Dit(dev, w);
+        using var g = new Graph(rt, dev);
+        g.Enter();
+        var pos = g.InputI32(new long[] { n }, Enumerable.Range(0, n).ToArray());
+        var xT = g.Input(x.Shape, x.Data);
+        var pT = g.Input(promptX.Shape, promptX.Data);
+        var cT = g.Input(cond.Shape, cond.Data);
+        var sT = g.Input(style.Shape, style.Data);
+        var trace = new List<Tensor>();
+        var outT = dit.Forward(g, xT, pT, cT, sT, t, pos, trace);
+        outT.MarkOutput();
+        foreach (var tb in trace) tb.MarkOutput();
+        foreach (int i in new[] { 0, 6, 12 })
+            Report($"blk{i}", Npy.Load(Path.Combine(refs, $"dit_blk{i}.npy")), trace[i].ToFloats(g));
+        Report("out", wantOut, outT.ToFloats(g));
+        g.Exit();
+        return 0;
+    }
+
+    /// <summary>Validate the s2mel CFM (25-step Euler + CFG) against cfm_*.npy.</summary>
+    private static int RunCfm(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var z = Transpose1CT(Npy.Load(Path.Combine(refs, "cfm_z.npy")));            // [T, 80]
+        var prompt = Transpose1CT(Npy.Load(Path.Combine(refs, "cfm_prompt.npy")));  // [Tp, 80]
+        var mu = Npy.Load(Path.Combine(refs, "cfm_mu.npy"));                        // [1, T, 512]
+        var style = Npy.Load(Path.Combine(refs, "cfm_style.npy"));                  // [1, 192]
+        var want = Transpose1CT(Npy.Load(Path.Combine(refs, "cfm_out.npy")));       // [T, 80]
+        int n = (int)z.Shape[0], tp = (int)prompt.Shape[0];
+        Console.WriteLine($"T={n} promptLen={tp} out={string.Join("x", want.Shape)}");
+
+        using var w = new GgufWeights(gguf, dev, new[] { "s2mel.cfm.estimator." });
+        using var dit = new Dit(dev, w);
+        var cfm = new Cfm(rt, dev, dit);
+        var got = cfm.Inference(z.Data, prompt.Data, tp, mu.Data, style.Data, 0.7f, 25);
+        Report("cfm", want, got);
+        return 0;
+    }
+
+    /// <summary>CAMPPlus style vector from the reference audio's Kaldi fbank.</summary>
+    private static int RunCampPlus(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var w16 = Npy.Load(Path.Combine(refs, "ra_wav16k.npy"));
+        var wav = new double[w16.Numel];
+        for (int i = 0; i < wav.Length; i++) wav[i] = w16.Data[i];
+        var fb = Dsp.KaldiFbank(wav, 16000, 80);
+        int t = fb.GetLength(0), bins = fb.GetLength(1);
+        Dsp.SubtractColumnMean(fb, t, bins);
+        Console.WriteLine($"fbank {t}x{bins}");
+
+        using var w = new GgufWeights(gguf, dev, new[] { "campplus." });
+        using var cp = new CampPlus(dev, w);
+        using var g = new Graph(rt, dev, 200000);
+        g.Enter();
+        var dbg = new Dictionary<string, Tensor>();
+        var style = cp.Forward(g, g.Input(new long[] { t, bins }, Flat(fb)), dbg).MarkOutput();
+        foreach (var v in dbg.Values) v.MarkOutput();
+        foreach (var k in new[] { "head", "tdnn", "blk1", "tr1", "blk2", "tr2", "blk3", "outnl", "dense" })
+            Report(k, Transpose1CT(Npy.Load(Path.Combine(refs, $"ra_cp_{k}.npy"))), dbg[k].ToFloats(g));
+        Report("style", Npy.Load(Path.Combine(refs, "ra_style.npy")), style.ToFloats(g));
+        Console.WriteLine($"  nodes={g.NodeCount}");
+        g.Exit();
+        return 0;
+    }
+
+    /// <summary>Wav2Vec2Bert hidden_states[17] and the standardised speaker embedding.</summary>
+    private static int RunW2v(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var feats = Npy.Load(Path.Combine(refs, "ra_feats.npy"));              // [1, T, 160]
+        int t = (int)feats.Shape[1];
+        var mask = Npy.Load(Path.Combine(refs, "ra_mask.npy")).Data;
+        var mean = Npy.Load(Path.Combine(refs, "ra_w2v_mean.npy")).Data;
+        var std = Npy.Load(Path.Combine(refs, "ra_w2v_std.npy")).Data;
+        Console.WriteLine($"feats {t}x160");
+
+        using var w = new GgufWeights(gguf, dev, new[] { "w2v." });
+        var model = new W2vBert(w);
+        using var g = new Graph(rt, dev, 200000);
+        g.Enter();
+        var dbg = new Dictionary<string, Tensor>();
+        var h = model.Forward(g, g.Input(new long[] { t, 160 }, feats.Data), mask, mean, std, dbg).MarkOutput();
+        foreach (var v in dbg.Values) v.MarkOutput();
+        foreach (var k in new[] { "hs0", "hs1", "hs2", "hs5", "hs9", "hs17" })
+            Report(k, Npy.Load(Path.Combine(refs, $"ra_{k}.npy")), dbg[k].ToFloats(g));
+        Report("spk", Npy.Load(Path.Combine(refs, "ra_spk.npy")), h.ToFloats(g));
+        Console.WriteLine($"  nodes={g.NodeCount}");
+        g.Exit();
+        return 0;
+    }
+
+    private static float[] Flat(float[,] a)
+    {
+        var r = new float[a.Length];
+        Buffer.BlockCopy(a, 0, r, 0, a.Length * 4);
+        return r;
+    }
+
+    /// <summary>Host DSP front-end: Kaldi fbank and the SeamlessM4T features.</summary>
+    private static int RunRefAudio(string refs)
+    {
+        var w16 = Npy.Load(Path.Combine(refs, "ra_wav16k.npy"));
+        var wav = new double[w16.Numel];
+        for (int i = 0; i < wav.Length; i++) wav[i] = w16.Data[i];
+        Console.WriteLine($"wav16k n={wav.Length}");
+
+        var fb = Dsp.KaldiFbank(wav, 16000, 80);
+        int frames = fb.GetLength(0), bins = fb.GetLength(1);
+        Console.WriteLine($"fbank {frames}x{bins}");
+        Dsp.SubtractColumnMean(fb, frames, bins);
+        Report("fbank", Npy.Load(Path.Combine(refs, "ra_fbank.npy")), Flat(fb));
+
+        var feats = Dsp.SeamlessFeatures(wav);
+        Console.WriteLine($"feats {feats.GetLength(0)}x{feats.GetLength(1)}");
+        Report("feats", Npy.Load(Path.Combine(refs, "ra_feats.npy")), Flat(feats));
+
+        var w22 = Npy.Load(Path.Combine(refs, "ra_wav22k.npy"));
+        var wav22 = new double[w22.Numel];
+        for (int i = 0; i < wav22.Length; i++) wav22[i] = w22.Data[i];
+        var mel = Dsp.MelSpectrogram(wav22);
+        Console.WriteLine($"mel {mel.GetLength(0)}x{mel.GetLength(1)}");
+        Report("mel", Npy.Load(Path.Combine(refs, "ra_mel.npy")), Flat(mel));
+        return 0;
+    }
+
+    /// <summary>Isolated upsample stage: bv_pre -> ups.0.0 -> bv_up0.</summary>
+    private static int RunBvUp(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var pre = Transpose1CT(Npy.Load(Path.Combine(refs, "bv_pre.npy")));
+        var want = Transpose1CT(Npy.Load(Path.Combine(refs, "bv_up0.npy")));
+        using var w = new GgufWeights(gguf, dev, new[] { "bigvgan." });
+        using var bv = new BigVgan(dev, w);
+        using var g = new Graph(rt, dev);
+        g.Enter();
+        var o = bv.Up(g, g.Input(pre.Shape, pre.Data), "ups.0.0", 4).MarkOutput();
+        Report("up0", want, o.ToFloats(g));
+        g.Exit();
+        return 0;
+    }
+
+    /// <summary>Validate the BigVGAN generator (mel -> wav) against bv_*.npy.</summary>
+    private static int RunBigVgan(Runtime rt, Device dev, string refs, string gguf)
+    {
+        var x = Transpose1CT(Npy.Load(Path.Combine(refs, "bv_x.npy")));             // [T, 80]
+        var want = Npy.Load(Path.Combine(refs, "bv_out.npy"));                      // [1,1,L]
+        int n = (int)x.Shape[0];
+        Console.WriteLine($"T={n} out_numel={want.Numel}");
+
+        using var w = new GgufWeights(gguf, dev, new[] { "bigvgan." });
+        using var bv = new BigVgan(dev, w);
+        using var g = new Graph(rt, dev);
+        g.Enter();
+        var trace = new List<Tensor>();
+        var dbg = new Dictionary<string, Tensor>();
+        var outT = bv.Forward(g, g.Input(x.Shape, x.Data), trace, dbg).MarkOutput();
+        foreach (var t in trace) t.MarkOutput();
+        foreach (var t in dbg.Values) t.MarkOutput();
+        if (Environment.GetEnvironmentVariable("BV_STATIC") != null) { g.AllocStatic(); g.ComputeStatic(); }
+        foreach (var kv in new[]
+        {
+            ("a0up", "resblocks.0.activations.0.up"), ("a0act", "resblocks.0.activations.0.act"),
+            ("a0", "resblocks.0.activations.0.down"), ("c10", "resblocks.0.c1.0"),
+            ("c20", "resblocks.0.c2.0"), ("a2", "resblocks.0.activations.2.down"),
+            ("c11", "resblocks.0.c1.1"), ("a3", "resblocks.0.activations.3.down"),
+            ("c21", "resblocks.0.c2.1"), ("c22", "resblocks.0.c2.2"),
+        })
+        {
+            var pth = Path.Combine(refs, $"bv_{kv.Item1}.npy");
+            if (File.Exists(pth))
+                Report(kv.Item1, Transpose1CT(Npy.Load(pth)), dbg[kv.Item2].ToFloats(g));
+        }
+        for (int k = 0; k < 6; k++)
+            Report($"stage{k}", Transpose1CT(Npy.Load(Path.Combine(refs, $"bv_stage{k}.npy"))), dbg[$"stage{k}"].ToFloats(g));
+        Report("pre", Transpose1CT(Npy.Load(Path.Combine(refs, "bv_pre.npy"))), trace[0].ToFloats(g));
+        Report("up0", Transpose1CT(Npy.Load(Path.Combine(refs, "bv_up0.npy"))), trace[1].ToFloats(g));
+        Report("rb0", Transpose1CT(Npy.Load(Path.Combine(refs, "bv_rb0.npy"))), trace[2].ToFloats(g));
+        Console.WriteLine("  trace[2]==dbg[x.2]? " + ReferenceEquals(trace[2], dbg["resblocks.0.x.2"]));
+        Report("x.2(dbg)", Transpose1CT(Npy.Load(Path.Combine(refs, "bv_rb0.npy"))), dbg["resblocks.0.x.2"].ToFloats(g));
+        Report("x.0(dbg)", Transpose1CT(Npy.Load(Path.Combine(refs, "bv_rb0.npy"))), dbg["resblocks.0.x.0"].ToFloats(g));
+        Report("actpost", Transpose1CT(Npy.Load(Path.Combine(refs, "bv_actpost.npy"))), trace[3].ToFloats(g));
+        Report("wav", want, outT.ToFloats(g));
         g.Exit();
         return 0;
     }
@@ -259,7 +508,7 @@ internal static class Program
     /// <summary>Validate the text tokenizer against ids dumped from the reference tiktoken.</summary>
     private static int RunTok(string refs)
     {
-        string vocab = Path.Combine(FindRoot(), "移植参考", "model", "index2.5",
+        string vocab = Path.Combine(FindRoot(), "model", "indextts2.5",
                                     "multilingual_zh_ja_yue_char_del.tiktoken");
         var tok = new IndexTokenizer(vocab);
         var want = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int[]>>(

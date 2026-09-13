@@ -21,7 +21,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "example", "python"))
 
+sys.path.insert(0, os.path.join(ROOT, "tools"))
 from ocr_py.ocr import Ocr  # noqa: E402
+import segment  # noqa: E402
 
 
 def main():
@@ -33,7 +35,7 @@ def main():
     ocr = Ocr()
     back = ocr.dev.name()
     t0 = time.perf_counter()
-    text = ocr.read_page(a.image, det=a.det)
+    text = segment.page_text(ocr, a.image, det=a.det)
     dt = time.perf_counter() - t0
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
