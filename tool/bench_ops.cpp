@@ -596,6 +596,24 @@ struct case_conv1d_rafa : bench_case {
         return out;
     }
 };
+
+// Fork-only: the im2col_rafa node alone (our 1D conv im2col).
+struct case_im2col_rafa : bench_case {
+    int64_t C, T, K, s;
+    case_im2col_rafa(int64_t C, int64_t T, int64_t K, int64_t s) : C(C), T(T), K(K), s(s) {}
+    const char * op() const override { return "im2col_rafa"; }
+    std::string vars() const override {
+        char b[128];
+        snprintf(b, sizeof(b), "C=%lld T=%lld K=%lld s=%lld", (long long) C, (long long) T, (long long) K, (long long) s);
+        return b;
+    }
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * x = nt(ctx, GGML_TYPE_F32, "x", C, T);
+        ggml_tensor * out = ggml_im2col_rafa(ctx, x, (int) K, (int) s, (int) (K / 2), 1, GGML_TYPE_F32);
+        ggml_set_name(out, "out");
+        return out;
+    }
+};
 #endif
 
 // ---------------------------------------------------------------------------
@@ -625,8 +643,14 @@ static std::vector<case_ptr> make_cases() {
     add(new case_conv2d_dw(64, 64, 128, 3, 3, 2));      // OCR token_conv
     add(new case_conv1d(256, 1536, 768, 8, 1));         // BigVGAN up sample
     add(new case_conv1d_im2col(256, 1536, 768, 8, 1));  // same shape, im2col->matmul
+    add(new case_conv1d(512, 1024, 1024, 31, 1));       // large K head-to-head
+    add(new case_conv1d_im2col(512, 1024, 1024, 31, 1));
 #ifdef BENCH_FORK
     add(new case_conv1d_rafa(256, 1536, 768, 8, 1));    // fork path (A only)
+    add(new case_conv1d_rafa(512, 1024, 1024, 31, 1));  // W2vBert-like large K
+    add(new case_im2col_rafa(1536, 256, 8, 1));         // the im2col_rafa node alone
+    add(new case_im2col_rafa(1024, 512, 31, 1));        // W2vBert-like K=31
+    add(new case_im2col_rafa(1536, 512, 8, 2));         // strided (upsample down path)
 #endif
 
     // --- conv_transpose_2d (OCR DB head) / col2im_1d (DacDecoder) ---
