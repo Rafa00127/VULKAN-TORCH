@@ -64,7 +64,8 @@ Get them either way:
 - **Convert locally** — `python tools/convert/convert_ocr_to_gguf.py`
 
   (reads PaddleX's own safetensors export under `~/.paddlex/official_models/`;
-  folds BatchNorm into the convs; `--outtype f16` halves the file, same speed).
+  folds BatchNorm into the convs). `--outtype f16` halves the file but is **not
+  recommended** — see the f16 caveat below.
 
 **Models don't have to live in the repo** — point the library at them:
 
@@ -73,9 +74,10 @@ ocr = Ocr(model_dir="D:/models/ppocrv6")          # any dir with the standard fi
 ocr = Ocr(rec_path="...", det_path="...", dict_path="...")   # or per-file
 ```
 
-or the env vars `OCR_MODEL_DIR` / `OCR_PRECISION=f16` / `OCR_REC_GGUF` / `OCR_DET_GGUF`
-/ `OCR_DICT`. Default is **F32**; rec-only needs just the rec GGUF + dict (det loads
-lazily on the first `det=True`).
+or the env vars `OCR_MODEL_DIR` / `OCR_PRECISION` / `OCR_REC_GGUF` / `OCR_DET_GGUF`
+/ `OCR_DICT`. `OCR_PRECISION` selects the GGUF for **both** rec and det (`f32` default;
+`f16` falls back to `f32` for whichever model wasn't converted as f16). rec-only needs
+just the rec GGUF + dict (det loads lazily on the first `det=True`).
 
 ### Files
 
@@ -95,6 +97,12 @@ ocr_py/
 
 - **rec-only is the default** — much faster and enough when lines are pre-cropped.
   `det=True` runs full det+rec on a region and returns newline-joined text.
+- **Default F32 — keep it.** F16 halves the weights (det 88→44 MB, rec 76→38 MB) but
+  **is not faster** (det+rec is conv-bound, not bandwidth-bound; measured identical on
+  the test images) and it's **slightly less accurate**: f16 det crops are a touch rougher
+  and f16 rec emits a few spurious glyphs (e.g. on the QQ screenshot f32 gave 118 clean
+  chars, f16 gave 119 including 3 `�`). Use `OCR_PRECISION=f16` only if you're
+  short on VRAM.
 - **CTC is decoded on the GPU** (`rec.forward_ids` → `mt.argmax`): the graph emits T
   int32 ids instead of the T×18710 softmax, so the ~17 MB/line logits never cross PCIe
   (that transfer was ~half the runtime). Ids are bit-identical to argmax-ing the

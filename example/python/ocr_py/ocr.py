@@ -29,6 +29,12 @@ DET_STD = np.array([0.229, 0.224, 0.225], np.float32)
 REC_H, REC_W = 48, 320
 
 
+def _pick(model_dir, name, precision):
+    """<model_dir>/<name>.<precision>.gguf, or the .f32 build if that isn't there."""
+    p = os.path.join(model_dir, f"{name}.{precision}.gguf")
+    return p if os.path.isfile(p) else os.path.join(model_dir, f"{name}.f32.gguf")
+
+
 def det_preprocess(bgr):
     """bgr uint8 HWC -> ([3,H,W], ratio_h, ratio_w); DetResizeForTest(64, min, 4000)."""
     h, w = bgr.shape[:2]
@@ -64,15 +70,16 @@ class Ocr:
         """Paths resolve in order: explicit arg > env var > repo default.
 
         ``model_dir`` points at any directory holding the standard filenames
-        (``ppocrv6_rec.<precision>.gguf``, ``ppocrv6_det.f32.gguf``,
-        ``ppocrv6_dict.txt``) — see ocr_py/_paths.py. The detection model is loaded
-        lazily, so a rec-only install needs only the rec GGUF + dict."""
+        (``ppocrv6_rec.<precision>.gguf``, ``ppocrv6_det.<precision>.gguf``,
+        ``ppocrv6_dict.txt``) — see ocr_py/_paths.py. Missing f16 builds fall back to
+        f32. The detection model is loaded lazily, so a rec-only install needs only the
+        rec GGUF + dict."""
         self.rt = mt.Runtime()
         self.dev = device or self.rt.gpu()
         prec = precision or _paths.PRECISION
         if model_dir:
-            rec_path = rec_path or os.path.join(model_dir, f"ppocrv6_rec.{prec}.gguf")
-            det_path = det_path or os.path.join(model_dir, "ppocrv6_det.f32.gguf")
+            rec_path = rec_path or _pick(model_dir, "ppocrv6_rec", prec)
+            det_path = det_path or _pick(model_dir, "ppocrv6_det", prec)
             dict_path = dict_path or os.path.join(model_dir, "ppocrv6_dict.txt")
         self._rec_path = rec_path or _paths.REC_GGUF
         self._det_path = det_path or _paths.DET_GGUF

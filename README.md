@@ -76,17 +76,13 @@ vulkantorch/_vulkantorch.cp312-win_amd64.pyd   # Python 扩展（直接生在包
 ## 目录结构
 
 ```
-src/                          C++ 核（runtime / graph / tensor / memory / ops / gguf + C ABI）
-vulkantorch/                  Python 库（__init__.py + pybind 源码 + 编译出的 .pyd）
-VulkanTorch.Net/              C# 库（P/Invoke 封装）
-example/python/higgstts_py/   Python 示例：HiggsTTS 移植 + CLI
-example/CSharp/HiggsTts.Net/  C# 示例：HiggsTTS 移植 + CLI
-example/CSharp/IndexTts.Net/  C# 示例：IndexTTS 2.5 移植 + CLI（零样本克隆 + 情绪控制）
-example/CSharp/VulkanTorch.Test/   冒烟测试（matmul / conv1d）
-example/CSharp/VulkanTorch.Bench/  三语言基准之一
-data/ref_audio/               参考音频 + tokenizer（已入库）
-bench/                        三语言基准
-third_party/ggml/             自带 ggml（只留 CPU + Vulkan）
+src/                          C++ 核
+vulkantorch/                  Python 库
+VulkanTorch.Net/              C# 库
+example/                      各种示例小模型 c#有两个tts，py有一个tts和一个ocr
+data/ref_audio/               参考音频 
+bench/                        一些测试用的脚本
+third_party/ggml/             只剩下cpu和vk的ggml
 ```
 
 ---
@@ -95,7 +91,7 @@ third_party/ggml/             自带 ggml（只留 CPU + Vulkan）
 
 ### 1. 安装
 
-没发 PyPI。跑完 `python build_win.py`，把**仓库根**加进 `sys.path` 即可：
+没发 PyPI。跑完 `python build_win.py`或者`build.sh`，把**仓库根**加进 `sys.path` 即可：
 
 ```python
 import sys
@@ -315,6 +311,8 @@ RTF:             0.233 x
 
 c#和py使用同一个 C++ 核，只有绑定层不同。
 
+省流就是：”它们都差不多“。
+
 c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](https://github.com/Rafa00127/HiggsTTS.cpp)，都为同一个ggml-vulkan后端，c++版没开图缓存，因为实测对于此情形，图缓存对c++版而言区别不太大，不过用图缓存来对比不开图缓存的c++版还是有一点点小小的不公平。
 
 **单算子**（ms）：
@@ -330,8 +328,6 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 |---|---|---|---|
 | 每步重建图 | 8.12 | 8.83 | 9.42 |
 | 图缓存 | — | **7.46** | **7.64** |
-
-单算子三语言没差别（GPU 派发主导）；自回归每步要重建 ~400 算子的图，C#/Python 穿过绑定层调这 400 次，开销才显出来——用上 [§3 的图缓存](#3-复用同一张图) 就消掉了，两边追平/略超过原生 C++。
 
 **图缓存版和重建版的 wav 是逐位相同的**（不是"差不多"），所以图缓存只省时间、不动数值。
 
@@ -359,7 +355,7 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 
 ## 示例模型：IndexTTS 2.5
 
-只做了 C# 端（成果要直接给 WPF 听书应用用）。零样本音色克隆 + 情绪控制，中/英/日/西等 99 种语言。
+只做了 C# 端（懒）。零样本音色克隆 + 情绪控制，中/英/日/西等 99 种语言。
 整条链路（文本前端 → GPT-2 AR → 语义 codec → s2mel/CFM → BigVGAN，外加参考音频的
 fbank/Wav2Vec2-BERT/CAMPPlus）都在 [example/CSharp/IndexTts.Net/](example/CSharp/IndexTts.Net/) 里，自包含。
 
