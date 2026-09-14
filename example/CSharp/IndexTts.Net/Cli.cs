@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using VulkanTorch;
+using IndexTtsSharp;
 
 namespace IndexTts;
 
 /// <summary>
-/// IndexTTS 2.5 command line: reference wav + text -> wav, mirroring indextts/infer_v2_5.py.
+/// IndexTTS 2.5 command line: reference wav + text -> wav, thin wrapper over the
+/// <see cref="IndexTtsSharp.Tts"/> library (kept for build/validation/demo).
 ///
 ///   synth (default)   --ref-wav r.wav --text "..." -> --out y.wav
 ///
@@ -18,13 +19,14 @@ namespace IndexTts;
 /// </summary>
 internal static class Cli
 {
-    private static Runtime _rt = null!;
-
-    private static readonly string[] Prefixes =
-        { "gpt.", "codec.", "s2mel.", "w2v.", "campplus.", "bigvgan.", "emo." };
-
     public static int Run(string[] args)
     {
+        if (IsHelp(args))
+        {
+            PrintHelp();
+            return 0;
+        }
+
         string? model = null, tokenizer = null, refWav = null, text = null, outPath = null, emoSpec = null;
         string lang = "zh";
         int maxSteps = 0, seed = 42, topK = 30, diffusionSteps = 25, numBeams = 1;
@@ -67,184 +69,96 @@ internal static class Cli
         refWav ??= Path.Combine(root, "data", "ref_audio", "melinaref_24k.wav");
         text ??= "大家好，这是一个测试。";
         outPath ??= Path.Combine(root, "data", "indextts", "cli.wav");
-        if (maxSteps <= 0) maxSteps = Math.Max(64, text.Length * 8);
 
-        using var rt = new Runtime();
-        _rt = rt;
-        var dev = rt.Gpu();
-        Console.WriteLine($"backend: {rt.Name}");
         var sw = Stopwatch.StartNew();
+        using var tts = new Tts(model, tokenizer);
+        double wLoadMs = sw.Elapsed.TotalMilliseconds;
+        Console.WriteLine($"backend: {tts.BackendName}");
+        Console.WriteLine($"weights: {tts.TensorCount} tensors in {wLoadMs:F0} ms");
 
-        using var w = new GgufWeights(model, dev, Prefixes, 6UL << 30);
-        Console.WriteLine($"weights: {w.Count} tensors in {sw.ElapsedMilliseconds} ms");
-
-        // ---- text front-end ---------------------------------------------------------------
-        var tok = new IndexTokenizer(tokenizer);
-        var front = new TextFrontend(tok);
-        var enc = front.EncodeForInference(text, TextFrontend.DefaultMaxTokensPerSegment, lang);
-        Console.WriteLine($"segments: {enc.Segments.Count}  lang={enc.Lang}");
-
-        // ---- reference audio --------------------------------------------------------------
+        // ---- text front-end + reference audio (one-time prep) -----------------------------
+        var prepSw = Stopwatch.StartNew();
         var wav = LoadWav(refWav, out int sr);
-        var w16 = Resampler.Resample(wav, sr, 16000);
-        var w22 = Resampler.Resample(wav, sr, 22050);
-        var fb = Dsp.KaldiFbank(ToDouble(w16), 16000, 80);
-        int nf = fb.GetLength(0);
+        var voice = tts.EncodeReference(wav, sr);
+        double prepMs = prepSw.Elapsed.TotalMilliseconds;
+        Console.WriteLine($"ref_mel: {voice.RefFrames} frames   (prep {prepMs:F0} ms)");
 
-        float[] style = Style(w, dev, fb, nf);
-
-        var feats = Dsp.Stack((float[,])fb.Clone(), out var fmask);
-        var (mean, std) = LoadW2vStats(w);
-        float[] spk = SpeakerEmbedding(w, dev, feats, fmask, mean, std);
-        Console.WriteLine($"ref: {nf} fbank frames, {feats.GetLength(0)} w2v frames");
-
-        var refMel = Dsp.MelSpectrogram(ToDouble(w22));      // [80, T]
-        int refMelLen = refMel.GetLength(1);
-        Console.WriteLine($"ref_mel: 80x{refMelLen}   ({sw.ElapsedMilliseconds} ms total)");
-
-        // ---- per-segment synthesis --------------------------------------------------------
-        var lr = new LengthRegulator(w);
-        var codec = new SemanticCodec(dev, w);
-        var dit = new Dit(dev, w);
-        var cfm = new Cfm(rt, dev, dit);
-        var big = new BigVgan(dev, w);
-
-        float[] promptCond = LengthReg(w, dev, lr, spk, refMelLen);
-        float[] baseEmo = EmotionVec(w, dev, spk);
-        float[] emovec = emoSpec == null ? baseEmo : EmotionVector.Blend(w, style, baseEmo, EmotionVector.Parse(emoSpec));
-        if (emoSpec != null) Console.WriteLine($"emotion: {emoSpec}");
-        float[] conds = CondPrefix(emovec);
-
-        var rng = new Random(seed);
-        var pieces = new List<float[]>();
-        for (int s = 0; s < enc.Segments.Count; s++)
+        var opts = new IndexOptions
         {
-            var t0 = Stopwatch.StartNew();
-            int langId = IndexTokenizer.LangToToken(enc.Lang);
-            int[] codes;
-            if (numBeams > 1)
-            {
-                using var beam = new BeamAr(rt, dev, w, 2048, numBeams) { UseReplay = useReplay };
-                codes = beam.Generate(conds, enc.SegmentTokenIds[s], langId, maxSteps, rng,
-                                      repPen, topP, temp, topK);
-            }
-            else
-            {
-                using var ar = new ArDecoder(rt, dev, w, 2048) { UseReplay = useReplay };
-                var logits = ar.Prefill(conds, enc.SegmentTokenIds[s], langId);
-                codes = ar.Generate(logits, ar.PromptLen, maxSteps, rng, repPen, topP, temp, topK);
-            }
-            Console.WriteLine($"  [{s + 1}/{enc.Segments.Count}] AR: {codes.Length} mel codes ({t0.ElapsedMilliseconds} ms)");
+            Lang = lang, Emotion = emoSpec, MaxSteps = maxSteps, Seed = seed,
+            TopK = topK, TopP = topP, Temperature = temp, RepPenalty = repPen,
+            CfgRate = cfgRate, DiffusionSteps = diffusionSteps, DurationFactor = durationFactor,
+            NumBeams = numBeams, UseReplay = useReplay,
+        };
+        if (emoSpec != null) Console.WriteLine($"emotion: {emoSpec}");
 
-            var sinfer = CodecDecode(dev, codec, codes);
-            int targetLen = (int)(codes.Length * 2 * 1.72 * durationFactor);   // the codec doubles the time axis
-            var cond = LengthReg(w, dev, lr, sinfer, targetLen);
-            var catCond = new float[(refMelLen + targetLen) * 512];
-            Array.Copy(promptCond, catCond, promptCond.Length);
-            Array.Copy(cond, 0, catCond, promptCond.Length, cond.Length);
+        var arSw = Stopwatch.StartNew();
+        var codes = tts.GenerateCodes(text, voice, opts);
+        double arMs = arSw.Elapsed.TotalMilliseconds;
+        Console.WriteLine($"GPT-2 AR: {codes.Count(c => c >= 0)} mel codes ({arMs:F0} ms)");
 
-            var z = new float[(refMelLen + targetLen) * 80];
-            for (int i = 0; i < z.Length; i++) z[i] = (float)(Gauss(rng));
+        var decSw = Stopwatch.StartNew();
+        var pcm = tts.Decode(codes, voice, opts);
+        double decMs = decSw.Elapsed.TotalMilliseconds;
 
-            var vcFull = cfm.Inference(z, FlattenT(refMel), refMelLen, catCond, style, cfgRate, diffusionSteps);
-            int vcLen = (refMelLen + targetLen) - refMelLen;
-            var vc = new float[vcLen * 80];
-            Array.Copy(vcFull, refMelLen * 80, vc, 0, vc.Length);
-
-            var pcm = BigVganRun(dev, big, vc, vcLen);
-            pieces.Add(pcm);
-            Console.WriteLine($"  [{s + 1}/{enc.Segments.Count}] mel {codes.Length}->{targetLen} f0 {vcLen} -> {pcm.Length / 22050.0:F2}s ({t0.ElapsedMilliseconds} ms)");
-        }
-
-        var all = Concat(pieces);
-        Program.SaveWav(outPath, all, 22050);
-        Console.WriteLine($"wrote {outPath}  {all.Length / 22050.0:F2} s   total {sw.ElapsedMilliseconds} ms");
+        Program.SaveWav(outPath, pcm, Tts.OutputSampleRate);
+        double audioSec = pcm.Length / (double)Tts.OutputSampleRate;
+        double synthMs = prepMs + arMs + decMs;   // excludes one-off weight load, like the reference's timer
+        Console.WriteLine();
+        Console.WriteLine("=== Timing ===");
+        Console.WriteLine($"Weights:           {wLoadMs,8:F0} ms");
+        Console.WriteLine($"Prep (text+ref):   {prepMs,8:F0} ms");
+        Console.WriteLine($"GPT-2 AR:          {arMs,8:F0} ms");
+        Console.WriteLine($"s2mel+BigVGAN:     {decMs,8:F0} ms");
+        Console.WriteLine($"Inference total:   {synthMs,8:F0} ms");
+        Console.WriteLine($"Audio:             {audioSec,8:F2} sec");
+        Console.WriteLine($"RTF:               {synthMs / 1000.0 / audioSec,8:F3} x");
+        Console.WriteLine($"Wall (incl. load): {sw.Elapsed.TotalMilliseconds,8:F0} ms");
+        Console.WriteLine($"wrote {outPath}");
         return 0;
     }
 
-    // ---- glue ------------------------------------------------------------------------------
-
-    private static float[] Style(GgufWeights w, Device dev, float[,] fb, int nf)
+    private static bool IsHelp(string[] args)
     {
-        var f = (float[,])fb.Clone();
-        Dsp.SubtractColumnMean(f, nf, fb.GetLength(1));
-        using var cp = new CampPlus(dev, w);
-        using var g = new Graph(_rt, dev, 300000);
-        g.Enter();
-        var t = cp.Forward(g, g.Input(new long[] { nf, fb.GetLength(1) }, Flat(f))).MarkOutput();
-        var r = t.ToFloats(g);
-        g.Exit();
-        return r;
+        if (args.Length == 0) return false;
+        if (args[0] is "-h" or "--help" or "help") return true;
+        return args.Any(a => a is "-h" or "--help");
     }
 
-    /// <summary>Wav2Vec2-BERT's per-dimension mean/std for standardising hidden_states[17].
-    /// Baked into the GGUF by the converter, so the CLI has no side files to depend on.</summary>
-    private static (float[], float[]) LoadW2vStats(GgufWeights w)
-        => (w["w2v.stats_mean"].ReadFloats(), w["w2v.stats_std"].ReadFloats());
-
-    private static float[] SpeakerEmbedding(GgufWeights w, Device dev, float[,] feats, float[] mask,
-                                            float[] mean, float[] std)
+    private static void PrintHelp()
     {
-        int t = feats.GetLength(0);
-        var model = new W2vBert(w);
-        using var g = new Graph(_rt, dev, 300000);
-        g.Enter();
-        var h = model.Forward(g, g.Input(new long[] { t, feats.GetLength(1) }, Flat(feats)), mask,
-                              mean, std).MarkOutput();
-        var r = h.ToFloats(g);
-        g.Exit();
-        return r;
-    }
+        Console.WriteLine(
+@"IndexTTS 2.5 CLI - reference wav + text -> wav (zero-shot voice clone + emotion control)
 
-    private static float[] CodecDecode(Device dev, SemanticCodec codec, int[] codes)
-    {
-        using var g = new Graph(_rt, dev, 200000);
-        g.Enter();
-        var t = codec.Decode(g, g.InputI32(new long[] { codes.Length }, codes)).MarkOutput();
-        var r = t.ToFloats(g);
-        g.Exit();
-        return r;
-    }
+Usage:
+  IndexTts.Net.exe synth --model <gguf> --ref-wav <wav> --text ""..."" [options]
 
-    private static float[] LengthReg(GgufWeights w, Device dev, LengthRegulator lr, float[] x, int ylens)
-    {
-        int t = x.Length / 1024;
-        using var g = new Graph(_rt, dev, 200000);
-        g.Enter();
-        var o = lr.Forward(g, g.Input(new long[] { t, 1024 }, x), ylens).MarkOutput();
-        var r = o.ToFloats(g);
-        g.Exit();
-        return r;
-    }
+Options:
+  --model <gguf>       IndexTTS 2.5 GGUF (required; default model/indextts2.5/indextts2.5.f16.gguf)
+  --tokenizer <path>   tiktoken vocab (default model/indextts2.5/multilingual_zh_ja_yue_char_del.tiktoken)
+  --ref-wav <wav>      reference audio, the timbre source (default data/ref_audio/melinaref_24k.wav)
+  --text <text>        text to synthesize; supports <char|pronunciation> annotations
+  --lang <code>        language: zh (default), en, ja, es, ... (99 languages)
+  --emo <spec>         emotion weights, e.g. ""happy=0.6,calm=0.4""
+                       (happy/angry/sad/afraid/disgusted/melancholic/surprised/calm)
+  --out <path>         output wav (default data/indextts/cli.wav)
+  --seed <n>           RNG seed (default 42)
+  --max-steps <n>      AR step cap; 0 = max(64, len(text)*8) (default 0)
+  --num-beams <n>      beam-search width (default 1)
+  --top-p <f>          nucleus sampling (default 0.8)
+  --top-k <n>          top-k sampling (default 30)
+  --temperature <f>    sampling temperature (default 0.8)
+  --rep-penalty <f>    repetition penalty (default 10)
+  --cfg-rate <f>       CFM classifier-free-guidance rate (default 0.7)
+  --diffusion-steps <n> CFM Euler steps (default 25)
+  --duration-factor <f> speech-rate / duration scale (default 1.0)
+  --no-graph-cache     rebuild the AR graph every step (A/B against the cached path)
+  -h, --help           show this help
 
-    private static float[] EmotionVec(GgufWeights w, Device dev, float[] spk)
-    {
-        int t = spk.Length / 1024;
-        using var g = new Graph(_rt, dev, 200000);
-        g.Enter();
-        // No separate emotion prompt: the emotion latent is the speaker conditioning itself, so
-        // merge_emovec(spk, spk) collapses to get_emovec(spk).
-        var e = EmoCond.GetEmovec(g, w, g.Input(new long[] { t, 1024 }, spk), t).MarkOutput();
-        var r = e.ToFloats(g);
-        g.Exit();
-        return r;
-    }
-
-    private static float[] CondPrefix(float[] emovec)
-    {
-        var c = new float[3 * 1280];
-        Array.Copy(emovec, c, emovec.Length);      // rows 1-2 stay zero
-        return c;
-    }
-
-    private static float[] BigVganRun(Device dev, BigVgan big, float[] vc, int vcLen)
-    {
-        using var g = new Graph(_rt, dev, 300000);
-        g.Enter();
-        var o = big.Forward(g, g.Input(new long[] { vcLen, 80 }, vc)).MarkOutput();
-        var r = o.ToFloats(g);
-        g.Exit();
-        return r;
+Example:
+  IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
+    --ref-wav data\ref_audio\melinaref_24k.wav ^
+    --text ""大家好，这是一个测试。"" --out data\indextts\out.wav");
     }
 
     private static float[] LoadWav(string path, out int sampleRate)
@@ -262,50 +176,5 @@ internal static class Cli
         var mono = new float[all.Length / ch];
         for (int i = 0; i < mono.Length; i++) mono[i] = all[i * ch];
         return mono;
-    }
-
-    private static double[] ToDouble(float[] x)
-    {
-        var d = new double[x.Length];
-        for (int i = 0; i < x.Length; i++) d[i] = x[i];
-        return d;
-    }
-
-    private static float[] Flat(float[,] a)
-    {
-        var r = new float[a.Length];
-        Buffer.BlockCopy(a, 0, r, 0, a.Length * 4);
-        return r;
-    }
-
-    /// <summary>mel is [80, T]; the rest of the pipeline wants [T, C].</summary>
-    private static float[] FlattenT(float[,] mel)
-    {
-        int c = mel.GetLength(0), t = mel.GetLength(1);
-        var r = new float[t * c];
-        for (int i = 0; i < t; i++)
-            for (int j = 0; j < c; j++) r[i * c + j] = mel[j, i];
-        return r;
-    }
-
-
-    private static double Gauss(Random rng)
-    {
-        double u1 = 1.0 - rng.NextDouble(), u2 = rng.NextDouble();
-        return Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
-    }
-
-    private static float[] Concat(List<float[]> parts)
-    {
-        int n = parts.Sum(p => p.Length) + Math.Max(0, parts.Count - 1) * 4410;   // 0.2 s gaps
-        var r = new float[n];
-        int at = 0;
-        for (int i = 0; i < parts.Count; i++)
-        {
-            Array.Copy(parts[i], 0, r, at, parts[i].Length);
-            at += parts[i].Length;
-            if (i < parts.Count - 1) at += 4410;
-        }
-        return r;
     }
 }

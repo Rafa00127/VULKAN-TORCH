@@ -306,7 +306,7 @@ Audio:            5.04 sec
 RTF:             0.233 x
 ```
 
-两个模式：`synth`（默认，参考音频+文本→wav）、`encode`（只跑 `encode_ref`）。参数与 Python 版一一对应，另有 `--no-graph-cache`。
+两个模式：`synth`（默认，参考音频+文本→wav）、`encode`（只跑 `encode_ref`）。参数与 Python 版一一对应，另有 `--no-graph-cache`；`-h` / `--help` 打印全部参数。
 
 ---
 
@@ -392,6 +392,38 @@ example\CSharp\IndexTts.Net\bin\Release\net10.0\IndexTts.Net.exe synth ^
 | `--cfg-rate` `--diffusion-steps` | CFM 的 CFG 强度和扩散步数（默认 0.7 / 25） |
 | `--duration-factor` | 语速/时长缩放 |
 | `--no-graph-cache` | 关掉 AR 的图缓存（A/B 用） |
+| `-h` `--help` | 打印全部参数 |
+
+### 速度（RX 7900 XTX / Vulkan / f16 GGUF）
+
+`synth` 单句合成，各阶段耗时与 RTF（RTF = 推理耗时 / 音频时长，和官方一样不含权重加载）：
+
+```bat
+IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
+  --ref-wav data\ref_audio\melinaref_24k.wav --text "..." --out data\indextts\out.wav
+```
+
+| 文本长度 | 音频 | GPT-2 AR | s2mel (codec+CFM) | BigVGAN | 推理总 | RTF |
+|---|---|---|---|---|---|---|
+| 11 字 | 3.51 s | 473 ms | 634 ms | 496 ms | 1.95 s | 0.557 |
+| 33 字 | 8.30 s | 1003 ms | 958 ms | 1073 ms | 3.39 s | 0.408 |
+| 89 字 | 17.89 s | 2107 ms | 1885 ms | 2107 ms | 6.45 s | 0.361 |
+
+对照官方在 **RTX 4090** 上公布的 2.5 RTF（`kv_cache=True`）：bf16 ~0.20、fp32 ~0.21（7~200 字）。
+本移植折算约慢 **1.7×**，差距主要来自硬件（7900 XTX vs 4090）和官方用 bf16 + CUDA 融合算子，这里是 f16 GGUF + 通用 Vulkan 后端。
+长句单段时 AR / s2mel / BigVGAN 三段耗时几乎均分。权重加载约 2 s（不计入上表）。
+
+## 两个 TTS 移植的横向对比
+
+同一台机（RX 7900 XTX / Vulkan）、同一句 89 字中文，各跑一次（RTF 不含权重加载）：
+
+| 模型 | 音频 | 推理耗时 | RTF |
+|---|---|---|---|
+| HiggsTTS v3（~4B，`higgs-v3-tts.gguf`，9.34 GB） | 23.72 s | 6.87 s | **0.29** |
+| IndexTTS 2.5（~0.8B，`indextts2.5.f16.gguf`，3.3 GB） | 17.89 s | 6.45 s | **0.361** |
+
+两者单句绝对耗时接近（~6.7–6.9 s）；Higgs 这次生成的音频更长（23.72 vs 17.89 s），所以 RTF 更低。
+Higgs 的 `Decode` 几乎免费（43 ms，耗时全在 36 层 backbone AR），IndexTTS 则是 AR / s2mel / BigVGAN 三家平分。
 
 ## 许可
 

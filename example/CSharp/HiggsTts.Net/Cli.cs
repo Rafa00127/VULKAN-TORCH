@@ -3,23 +3,19 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using VulkanTorch;
+using HiggsTtsSharp;
 
 namespace HiggsTts;
 
 /// <summary>
-/// HiggsTTS command-line, self-contained (like higgstts_py/cli.py):
-/// reference wav + text -> wav, no Python-side export needed.
+/// HiggsTTS command-line: reference wav + text -> wav, thin wrapper over the
+/// <see cref="HiggsTtsSharp.Tts"/> library (kept for build/validation/demo).
 ///
 ///   synth   (default) ref wav + text -> wav     [encode_ref + AR + DAC decode]
 ///   encode            ref wav -> RVQ codes      [encode_ref only]
 /// </summary>
 internal static class Cli
 {
-    // prompt special token ids (from higgs_tts.h / higgstts_py/tts.py)
-    private const int TokTts = 151667, TokRefText = 151680, TokRefAudio = 151679;
-    private const int TokText = 151672, TokAudio = 151670, AudioPlaceholder = -100;
-
     private static float[] LoadWav(string path, out int sampleRate)
     {
         using var r = new NAudio.Wave.AudioFileReader(path);
@@ -37,24 +33,10 @@ internal static class Cli
         return mono;
     }
 
-    private static int[] BuildPrompt(HiggsTokenizer tok, string text, string refText, int numRef)
-    {
-        var p = new List<int> { TokTts };
-        if (!string.IsNullOrEmpty(refText))
-        {
-            p.Add(TokRefText);
-            p.AddRange(tok.Encode(refText));
-        }
-        p.Add(TokRefAudio);
-        for (int i = 0; i < numRef; i++) p.Add(AudioPlaceholder);
-        p.Add(TokText);
-        if (!string.IsNullOrEmpty(text)) p.AddRange(tok.Encode(text));
-        p.Add(TokAudio);
-        return p.ToArray();
-    }
-
     public static int Run(string[] args)
     {
+        if (IsHelp(args)) { PrintHelp(); return 0; }
+
         string mode = "synth", refText = "", text = "";
         string? model = null, refWav = null, outPath = null, tokenizer = null;
         float temperature = 0.9f;
@@ -93,63 +75,47 @@ internal static class Cli
         tokenizer ??= Path.Combine(data, "higgs_tts_v3_tokenizer.json");
         outPath ??= Path.Combine(root, "data", "higgstts", $"cli_cs_{mode}.wav");
 
-        using var rt = new Runtime();
-        var dev = rt.Gpu();
-        Console.WriteLine($"backend: {rt.Name}");
-
-        // ---- load the prefill (codec) weights; + backbone for synth ----
         var sw = Stopwatch.StartNew();
-        string[] prefixes = mode == "encode"
-            ? HiggsWeights.PrefillPrefixes
-            : HiggsWeights.PrefillPrefixes.Concat(HiggsWeights.BackbonePrefixes).ToArray();
-        using var w = new HiggsWeights(model, dev, prefixes, 4UL << 30);
-        EncodeRef.BuildPceWeight(w);
-        Console.WriteLine($"load weights:        {sw.Elapsed.TotalMilliseconds,8:F1} ms  ({w.Count} tensors)");
+        using var tts = new Tts(model, tokenizer);
+        Console.WriteLine($"backend: {tts.BackendName}");
+        Console.WriteLine($"load weights:        {sw.Elapsed.TotalMilliseconds,8:F1} ms  ({tts.TensorCount} tensors)");
 
         var wav = LoadWav(refWav, out int sr);
         sw.Restart();
-        var refOut = EncodeRef.Run(rt, dev, w, wav, sr);
+        var voice = tts.EncodeReference(wav, sr, refText);
         double encMs = sw.Elapsed.TotalMilliseconds;
-        int rows = refOut.GetLength(0);
-        Console.WriteLine($"Prefill: {rows} frames x {Ar.NCb} codebooks ({encMs:F0} ms)");
-        Console.WriteLine($"  first: {string.Join(", ", Enumerable.Range(0, Ar.NCb).Select(c => refOut[0, c]))}");
+        Console.WriteLine($"Prefill: {voice.Rows} frames x 8 codebooks ({encMs:F0} ms)");
+        Console.WriteLine($"  first: {string.Join(", ", voice.Codes.Take(8))}");
 
         if (mode == "encode")
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
-            var flat = new int[rows * Ar.NCb];
-            for (int i = 0; i < rows; i++)
-                for (int c = 0; c < Ar.NCb; c++) flat[i * Ar.NCb + c] = refOut[i, c];
-            var bytes = new byte[flat.Length * 4];
-            Buffer.BlockCopy(flat, 0, bytes, 0, bytes.Length);
+            var bytes = new byte[voice.Codes.Length * 4];
+            Buffer.BlockCopy(voice.Codes, 0, bytes, 0, bytes.Length);
             File.WriteAllBytes(outPath + ".i32", bytes);
             Console.WriteLine($"wrote {outPath}.i32");
             return 0;
         }
 
-        // ---- synth: tokenize, build prompt, AR, decode ----
-        var tok = new HiggsTokenizer(tokenizer);
-        var ids = tok.Encode(text);
+        var ids = tts.EncodeText(text);
         Console.WriteLine($"text tokens: {ids.Length} -> [{string.Join(", ", ids)}]");
+        Console.WriteLine($"prompt ref_codes=[{voice.Rows}, 8]");
 
-        var refFlat = new int[rows * Ar.NCb];
-        for (int i = 0; i < rows; i++)
-            for (int c = 0; c < Ar.NCb; c++) refFlat[i * Ar.NCb + c] = refOut[i, c];
-
-        var prompt = BuildPrompt(tok, text, refText, rows + Ar.NCb - 1);
-        Console.WriteLine($"prompt L={prompt.Length}  ref_codes=[{rows}, {Ar.NCb}]");
-
+        var opts = new HiggsOptions
+        {
+            Temperature = temperature, TopK = topk, Seed = seed,
+            MaxSteps = maxSteps, GraphCache = !noCache,
+        };
         sw.Restart();
-        var codes = Ar.Generate(rt, dev, w, prompt, refFlat, rows, out int steps,
-                                temperature, seed, maxSteps, topk, graphCache: !noCache);
+        var codes = tts.GenerateCodes(text, voice, opts);
         double arMs = sw.Elapsed.TotalMilliseconds;
-        int genRows = codes.Length / Ar.NCb;
-        Console.WriteLine($"Backbone AR: {steps} raw frames ({arMs:F0} ms)");
+        int genRows = codes.Length / 8;
+        Console.WriteLine($"Backbone AR: {genRows} raw frames ({arMs:F0} ms)");
 
         sw.Restart();
-        var pcm = DacDecoder.Decode(rt, dev, w, codes, genRows);
+        var pcm = tts.Decode(codes);
         double decMs = sw.Elapsed.TotalMilliseconds;
-        double dur = pcm.Length / 24000.0;
+        double dur = pcm.Length / (double)Tts.SampleRate;
         double totalMs = encMs + arMs + decMs;
         Console.WriteLine($"Decode: {pcm.Length} PCM samples ({dur:F2} sec) ({decMs:F0} ms)");
 
@@ -166,5 +132,45 @@ internal static class Cli
         Program.SaveWav(outPath, pcm);
         Console.WriteLine($"\nSaved: {outPath}");
         return 0;
+    }
+
+    private static bool IsHelp(string[] args)
+    {
+        if (args.Length == 0) return false;
+        if (args[0] is "-h" or "--help" or "help") return true;
+        return args.Any(a => a is "-h" or "--help");
+    }
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine(
+@"HiggsTTS CLI - reference audio + text -> wav (encode_ref + Qwen3 AR + DAC decode)
+
+Usage:
+  HiggsTts.Net.exe [synth] --model <gguf> [options]
+  HiggsTts.Net.exe encode  --model <gguf> [--ref-wav <wav>] [--out <path>]
+
+Modes:
+  synth      (default) reference wav + text -> wav
+  encode     reference wav -> RVQ codes (writes <out>.i32); stops after encode_ref
+
+Options:
+  --model <gguf>       HiggsTTS GGUF (required)
+  --tokenizer <json>   tokenizer.json (default: data/ref_audio/higgs_tts_v3_tokenizer.json)
+  --ref-wav <wav>      reference audio (default: data/ref_audio/melinaref_24k.wav)
+  --ref-text <text>    transcript of the reference audio (optional but recommended)
+  --text <text>        text to synthesize; supports <|style:whispering|> tags
+  --out <path>         output wav (default: data/higgstts/cli_cs_<mode>.wav)
+  --temperature <f>    sampling temperature (default 0.9)
+  --topk <n>           top-k sampling (default 50)
+  --seed <n>           RNG seed (default 42)
+  --max-steps <n>      AR step budget; 0 = predict from text length (default 0)
+  --no-graph-cache     rebuild the AR graph every step (A/B against the cached path)
+  -h, --help           show this help
+
+Examples:
+  HiggsTts.Net.exe synth --model D:\models\HiggsTTS3.gguf ^
+    --ref-text ""I have no doubt you will become Elden Lord."" ^
+    --text ""<|style:whispering|>Hello, how are you?""");
     }
 }

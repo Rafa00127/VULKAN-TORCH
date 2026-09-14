@@ -26,14 +26,19 @@ public sealed class Dit : IDisposable
     private readonly GgufWeights _w;
     private readonly Memory _mem;
     private readonly Dictionary<string, Tensor> _fused = new();
-    private readonly float[] _tfreq = new float[128];
+    private static readonly float[] Tfreq = BuildTfreq();
+
+    private static float[] BuildTfreq()
+    {
+        var f = new float[128];
+        for (int i = 0; i < 128; i++) f[i] = MathF.Exp(-MathF.Log(10000f) * i / 128f);
+        return f;
+    }
 
     public Dit(Device dev, GgufWeights w)
     {
         _w = w;
         _mem = new Memory(dev, 256UL << 20);
-        for (int i = 0; i < 128; i++)
-            _tfreq[i] = MathF.Exp(-MathF.Log(10000f) * i / 128f);
         FuseTree("final_layer.linear");
         FuseTree("wavenet.cond_layer.conv.conv");
         for (int i = 0; i < WnLayers; i++)
@@ -79,10 +84,17 @@ public sealed class Dit : IDisposable
     /// hidden state after each transformer block (for stage-wise validation).</summary>
     public Tensor Forward(Graph g, Tensor x, Tensor promptX, Tensor cond, Tensor style, float t,
                           Tensor pos, List<Tensor>? trace = null)
+        => Forward(g, x, promptX, cond, style, g.Input(new long[] { 1, 256 }, TimeEmbedFreq(t)), pos, trace);
+
+    /// <summary>As above but the timestep embedding comes in as a pre-created graph input, so the
+    /// whole estimator graph can be captured once and replayed via <see cref="Graph.SetInput"/>
+    /// (the CFM Euler loop reuses one graph across all steps instead of rebuilding each time).</summary>
+    public Tensor Forward(Graph g, Tensor x, Tensor promptX, Tensor cond, Tensor style, Tensor fe,
+                          Tensor pos, List<Tensor>? trace = null)
     {
         int T = (int)x.Shape[0];
-        var t1 = TimeEmbed(g, t, "t_embedder");                        // [1, 512]
-        var t2 = TimeEmbed(g, t, "t_embedder2");                       // [1, 512]
+        var t1 = TimeEmbed(g, fe, "t_embedder");                       // [1, 512]
+        var t2 = TimeEmbed(g, fe, "t_embedder2");                      // [1, 512]
 
         var condP = Ops.Add(Ops.Linear(cond, _w[P + "cond_projection.weight"]),
                             _w[P + "cond_projection.bias"]);           // [T, 512]
@@ -232,17 +244,23 @@ public sealed class Dit : IDisposable
 
     // ---- timestep embedding ------------------------------------------------------------------
 
-    /// <summary>Sinusoidal timestep embedding (host) then the 2-layer MLP: PT [1, 512].</summary>
-    private Tensor TimeEmbed(Graph g, float t, string prefix)
+    /// <summary>Sinusoidal timestep embedding (host): PT [1, 256]. Feed the result to the MLP
+    /// (or upload it into a captured graph's timestep input during replay).</summary>
+    public static float[] TimeEmbedFreq(float t)
     {
         var freq = new float[256];
         for (int i = 0; i < 128; i++)
         {
-            float a = 1000f * t * _tfreq[i];
+            float a = 1000f * t * Tfreq[i];
             freq[i] = MathF.Cos(a);
             freq[128 + i] = MathF.Sin(a);
         }
-        var fe = g.Input(new long[] { 1, 256 }, freq);
+        return freq;
+    }
+
+    /// <summary>The 2-layer MLP over a timestep-embedding input tensor: PT [1, 512].</summary>
+    private Tensor TimeEmbed(Graph g, Tensor fe, string prefix)
+    {
         var h = Ops.Add(Ops.Linear(fe, _w[P + prefix + ".mlp.0.weight"]), _w[P + prefix + ".mlp.0.bias"]);
         h = Ops.Silu(h);
         return Ops.Add(Ops.Linear(h, _w[P + prefix + ".mlp.2.weight"]), _w[P + prefix + ".mlp.2.bias"]);

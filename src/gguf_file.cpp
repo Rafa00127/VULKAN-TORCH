@@ -6,6 +6,7 @@
 #include "memory.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -85,7 +86,11 @@ Tensor GgufFile::tensor(const std::string& name) {
     const int64_t id = gguf_find_tensor(gguf_, name.c_str());
     const size_t offset = data_offset_ + gguf_get_tensor_offset(gguf_, id);
 
-    std::ifstream in(path_, std::ios::binary);
+    // std::ifstream's narrow-path ctor uses the ANSI codepage on Windows, so a
+    // UTF-8 path (e.g. a Chinese-named model dir) fails to open here even though
+    // gguf_init_from_file (via ggml_fopen) already opened it. u8path gives the
+    // wide path the CRT needs.
+    std::ifstream in(std::filesystem::u8path(path_), std::ios::binary);
     if (!in) throw std::runtime_error("GgufFile: cannot reopen " + path_);
     in.seekg(static_cast<std::streamoff>(offset));
 

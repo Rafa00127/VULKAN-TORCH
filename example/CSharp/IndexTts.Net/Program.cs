@@ -66,7 +66,8 @@ internal static class Program
 
     private static int Main(string[] args)
     {
-        if (args.Length > 0 && args[0] == "synth") return Cli.Run(args);
+        if (args.Length > 0 && (args[0] == "synth" || args[0] is "-h" or "--help" or "help"))
+            return Cli.Run(args);
 
         string mode = args.Length > 0 ? args[0] : "gpt2";
         string root = FindRoot();

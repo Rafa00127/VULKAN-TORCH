@@ -61,6 +61,16 @@ add_executable(bench_cpp bench/bench_cpp.cpp)
 target_link_libraries(bench_cpp PRIVATE vulkantorch_core)
 
 # ---------------------------------------------------------------------------
+# GGUF re-quantizer (optional standalone tool, off by default)
+# ---------------------------------------------------------------------------
+option(BUILD_QUANTIZE "Build the standalone GGUF re-quantization tool" OFF)
+if(BUILD_QUANTIZE)
+    # CPU-only: link ggml-base alone so the tool carries no Vulkan backend.
+    add_executable(quantize tools/quantize/main.cpp)
+    target_link_libraries(quantize PRIVATE ggml-base)
+endif()
+
+# ---------------------------------------------------------------------------
 # python module (optional)
 # ---------------------------------------------------------------------------
 option(BUILD_PYTHON "Build the vulkantorch python module" ON)
