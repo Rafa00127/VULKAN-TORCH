@@ -4781,6 +4781,13 @@ struct ggml_tensor * ggml_conv_2d(
                 ggml_reshape_2d(ctx, a_mat, (a_mat->ne[0] * a_mat->ne[1] * a_mat->ne[2]),  a_mat->ne[3]));   // [OC, IC, KH, KW] => [OC, IC * KH * KW]
 
     result = ggml_reshape_4d(ctx, result, im2col->ne[1], im2col->ne[2], im2col->ne[3], a->ne[3]); // [OC, N, OH, OW]
+    if (a->ne[3] == 1) {
+        // N == 1 (every inference case here): mul_mat already produced [OC,1,OH,OW] with the
+        // spatial dims fastest (ne=[OW,OH,1,OC]). The permute(0,1,3,2)+cont below would only
+        // move the size-1 batch dim, i.e. a layout-identical round-trip that just copies the
+        // whole tensor. Reshape to the same ne=[OW,OH,OC,1] and skip the copy.
+        return ggml_reshape_3d(ctx, result, im2col->ne[1], im2col->ne[2], a->ne[3]);
+    }
     result = ggml_cont(ctx, ggml_permute(ctx, result, 0, 1, 3, 2)); // [N, OC, OH, OW]
 
 
