@@ -97,19 +97,22 @@ internal static class Cli
         double arMs = arSw.Elapsed.TotalMilliseconds;
         Console.WriteLine($"GPT-2 AR: {codes.Count(c => c >= 0)} mel codes ({arMs:F0} ms)");
 
+        double s2melMs = 0, vganMs = 0;
         var decSw = Stopwatch.StartNew();
-        var pcm = tts.Decode(codes, voice, opts);
+        var pcm = tts.Decode(codes, voice, opts, (s2m, vg) => { s2melMs = s2m; vganMs = vg; });
         double decMs = decSw.Elapsed.TotalMilliseconds;
+        Console.WriteLine($"Decode: s2mel {s2melMs:F0} ms + BigVGAN {vganMs:F0} ms ({decMs:F0} ms)");
 
         Program.SaveWav(outPath, pcm, Tts.OutputSampleRate);
         double audioSec = pcm.Length / (double)Tts.OutputSampleRate;
-        double synthMs = prepMs + arMs + decMs;   // excludes one-off weight load, like the reference's timer
+        double synthMs = prepMs + arMs + s2melMs + vganMs;   // excludes one-off weight load, like the reference's timer
         Console.WriteLine();
         Console.WriteLine("=== Timing ===");
         Console.WriteLine($"Weights:           {wLoadMs,8:F0} ms");
         Console.WriteLine($"Prep (text+ref):   {prepMs,8:F0} ms");
         Console.WriteLine($"GPT-2 AR:          {arMs,8:F0} ms");
-        Console.WriteLine($"s2mel+BigVGAN:     {decMs,8:F0} ms");
+        Console.WriteLine($"s2mel (codec+CFM): {s2melMs,8:F0} ms");
+        Console.WriteLine($"BigVGAN:           {vganMs,8:F0} ms");
         Console.WriteLine($"Inference total:   {synthMs,8:F0} ms");
         Console.WriteLine($"Audio:             {audioSec,8:F2} sec");
         Console.WriteLine($"RTF:               {synthMs / 1000.0 / audioSec,8:F3} x");

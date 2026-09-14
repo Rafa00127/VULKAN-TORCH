@@ -72,7 +72,7 @@ internal static class Cli
         string root = Program.FindRoot();
         string data = Path.Combine(root, "data", "ref_audio");
         refWav ??= Path.Combine(data, "melinaref_24k.wav");
-        tokenizer ??= Path.Combine(data, "higgs_tts_v3_tokenizer.json");
+        // tokenizer stays null by default → the library builds it from the GGUF's vocab+merges.
         outPath ??= Path.Combine(root, "data", "higgstts", $"cli_cs_{mode}.wav");
 
         var sw = Stopwatch.StartNew();
@@ -156,7 +156,8 @@ Modes:
 
 Options:
   --model <gguf>       HiggsTTS GGUF (required)
-  --tokenizer <json>   tokenizer.json (default: data/ref_audio/higgs_tts_v3_tokenizer.json)
+  --tokenizer <json>   override the BPE tokenizer with an HF tokenizer.json
+                       (default: rebuilt from the GGUF's embedded vocab + merges)
   --ref-wav <wav>      reference audio (default: data/ref_audio/melinaref_24k.wav)
   --ref-text <text>    transcript of the reference audio (optional but recommended)
   --text <text>        text to synthesize; supports <|style:whispering|> tags

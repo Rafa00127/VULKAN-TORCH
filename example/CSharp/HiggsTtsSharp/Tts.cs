@@ -48,12 +48,16 @@ public sealed class Tts : IDisposable
             HiggsTts.HiggsWeights.PrefillPrefixes.Concat(HiggsTts.HiggsWeights.BackbonePrefixes).ToArray(),
             4UL << 30);
         EncodeRef.BuildPceWeight(_w);
-        if (tokenizerJsonPath != null) _tok = new HiggsTokenizer(tokenizerJsonPath);
+        // The GGUF carries the vocab+merges, so a separate tokenizer.json is optional.
+        _tok = !string.IsNullOrWhiteSpace(tokenizerJsonPath)
+            ? new HiggsTokenizer(tokenizerJsonPath)
+            : HiggsTokenizer.FromGguf(modelGgufPath);
     }
 
-    /// <summary>Set / replace the BPE tokenizer (required before <see cref="GenerateCodes"/>).</summary>
+    /// <summary>Override the BPE tokenizer with an HF tokenizer.json (empty path = keep the GGUF-built one).</summary>
     public bool SetTokenizer(string tokenizerJsonPath)
     {
+        if (string.IsNullOrWhiteSpace(tokenizerJsonPath)) return true;
         _tok = new HiggsTokenizer(tokenizerJsonPath);
         return true;
     }

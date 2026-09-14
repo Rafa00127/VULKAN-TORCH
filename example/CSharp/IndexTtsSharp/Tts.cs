@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using IndexTts;
 using VulkanTorch;
@@ -122,13 +123,17 @@ public sealed class Tts : IDisposable
     }
 
     /// <summary>AR mel codes + voice → 24 kHz float32 PCM.</summary>
-    public float[] Decode(int[] codes, ReferenceVoice v, IndexOptions? options = null)
+    /// <param name="stageTiming">Optional <c>(s2melMs, bigVganMs)</c> breakdown of the decode.</param>
+    public float[] Decode(int[] codes, ReferenceVoice v, IndexOptions? options = null,
+                          Action<double, double>? stageTiming = null)
     {
         options ??= new IndexOptions();
         var rng = new Random(options.Seed);
         var pieces = new List<float[]>();
+        double s2melMs = 0, vganMs = 0;
         foreach (var seg in SplitSegments(codes))
         {
+            var sw = Stopwatch.StartNew();
             var sinfer = CodecDecode(_codec, seg);
             int targetLen = (int)(seg.Length * 2 * 1.72 * options.DurationFactor);   // codec doubles the time axis
             var cond = LengthReg(_lr, sinfer, targetLen);
@@ -143,10 +148,16 @@ public sealed class Tts : IDisposable
                                         options.CfgRate, options.DiffusionSteps);
             var vc = new float[targetLen * 80];
             Array.Copy(vcFull, v.RefFrames * 80, vc, 0, vc.Length);
+            s2melMs += sw.Elapsed.TotalMilliseconds;
+
+            sw.Restart();
             pieces.Add(BigVganRun(_big, vc, targetLen));
+            vganMs += sw.Elapsed.TotalMilliseconds;
         }
         var all = Concat(pieces);
-        return Resampler.Resample(all, ModelSampleRate, OutputSampleRate);
+        var pcm = Resampler.Resample(all, ModelSampleRate, OutputSampleRate);
+        stageTiming?.Invoke(s2melMs, vganMs);
+        return pcm;
     }
 
     /// <summary>Text + voice → 24 kHz float32 PCM.</summary>
