@@ -13,8 +13,4 @@
     <ProjectReference Include="..\..\..\VulkanTorch.Net\VulkanTorch.Net.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include="..\..\..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
 </Project>

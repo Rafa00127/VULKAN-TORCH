@@ -13,10 +13,4 @@
     <ProjectReference Include="..\..\..\VulkanTorch.Net\VulkanTorch.Net.csproj" />
   </ItemGroup>
 
-  <!-- native core (built by build_win.py) copied next to the managed output. ggml is
-       linked statically into vulkantorch.dll, so this single file is all we need. -->
-  <ItemGroup>
-    <None Include="..\..\..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
 </Project>

@@ -10,4 +10,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- The native core (built by build_win.py), declared ONCE here. MSBuild copies
+       items with CopyToOutputDirectory recursively along the ProjectReference graph,
+       so every consumer that references VulkanTorch.Net (directly, or through the
+       model libraries IndexTtsSharp / HiggsTtsSharp) gets vulkantorch.dll in its
+       output. ggml is linked statically into it, so this one file is all we need. -->
+  <ItemGroup>
+    <None Include="..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

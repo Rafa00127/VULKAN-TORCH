@@ -15,9 +15,4 @@
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
   </ItemGroup>
 
-  <!-- native core (built by build_win.py); flows to referencing outputs. -->
-  <ItemGroup>
-    <None Include="..\..\..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
 </Project>

@@ -15,9 +15,4 @@
     <PackageReference Include="NAudio" Version="2.3.0" />
   </ItemGroup>
 
-  <!-- native core (also carried by HiggsTtsSharp; kept here so the exe is self-contained). -->
-  <ItemGroup>
-    <None Include="..\..\..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
 </Project>
