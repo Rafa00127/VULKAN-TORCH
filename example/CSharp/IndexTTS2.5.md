@@ -1,5 +1,7 @@
 # IndexTTS 2.5 · C# 移植
 
+**🌏 Language / 语言:** **中文** · [English](IndexTTS2.5.en.md)
+
 [IndexTTS 2.5](https://github.com/index-tts/index-tts)（B站，零样本音色克隆 + 情绪控制）在
 [vulkan-torch](../../README.md) 上的 C# 移植。整条推理链自包含，不依赖 Python 侧导出任何东西。
 

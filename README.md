@@ -1,5 +1,7 @@
 # VULKAN-TORCH
 
+**🌏 Language / 语言:** **中文** · [English](README.en.md)
+
 ## 总结和碎碎念
 
 使用了ggml-vulkan的部分作为核心，实现两个类似torch的库（python和c#各一个）。
@@ -337,6 +339,8 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 
 ## 示例模型：HiggsTTS
 
+> **权重下载** —— [NeemaShioSe/HiggsTTS3.gguf](https://huggingface.co/NeemaShioSe/HiggsTTS3.gguf)（约 4GB）
+
 两边的示例都把 [HiggsTTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b)（4B TTS）移植了过来：
 
 ```
@@ -354,6 +358,8 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 ---
 
 ## 示例模型：IndexTTS 2.5
+
+> **权重下载** —— [NeemaShioSe/IndexTTS2.5.gguf](https://huggingface.co/NeemaShioSe/IndexTTS2.5.gguf)（约 3.3GB）
 
 只做了 C# 端（懒）。零样本音色克隆 + 情绪控制，中/英/日/西等 99 种语言。
 整条链路（文本前端 → GPT-2 AR → 语义 codec → s2mel/CFM → BigVGAN，外加参考音频的
@@ -378,7 +384,7 @@ example\CSharp\IndexTts.Net\bin\Release\net10.0\IndexTts.Net.exe synth ^
 
 | 参数 | 说明 |
 |---|---|
-| `--model` | **必填**，IndexTTS 2.5 的 GGUF（4 个权重文件用 `tools/convert/convert_index_tts2_to_gguf.py` 转，约 3.3GB） |
+| `--model` | **必填**，IndexTTS 2.5 的 GGUF；[下载](https://huggingface.co/NeemaShioSe/IndexTTS2.5.gguf)（约 3.3GB，或用 `tools/convert/convert_index_tts2_to_gguf.py` 自己转） |
 | `--ref-wav` | 参考音频（音色来源），默认 `data/ref_audio/melinaref_24k.wav` |
 | `--text` | 要合成的文本，可加 `<字\|读音>` 发音标注 |
 | `--emo` | 情绪权重，如 `--emo "happy=0.6,calm=0.4"`（8 种：happy/angry/sad/afraid/disgusted/melancholic/surprised/calm） |
@@ -408,6 +414,13 @@ IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
 对照官方在 **RTX 4090** 上公布的 2.5 RTF（`kv_cache=True`）：bf16 ~0.20、fp32 ~0.21（7~200 字）。
 本移植折算约慢 **1.75×**，差距主要来自硬件（7900 XTX vs 4090）和官方用 bf16 + CUDA 融合算子，这里是 f16 GGUF + 通用 Vulkan 后端。
 长句单段时 AR / s2mel / BigVGAN 三段耗时几乎均分。权重加载约 2–3 s（不计入上表）。
+
+## 示例模型：PP-OCRv6（PaddleOCR）
+
+> **权重下载** —— [NeemaShioSe/paddleocr.gguf](https://huggingface.co/NeemaShioSe/paddleocr.gguf)（rec + det + dict）
+
+文本检测 + 识别，只做了 Python 端（`example/python/ocr_py/`），自包含 `.pyd`。
+用法、精度/速度结论见 [example/python/PaddleOCR.md](example/python/PaddleOCR.md)。
 
 ## 两个 TTS 移植的横向对比
 

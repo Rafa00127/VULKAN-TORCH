@@ -1,5 +1,7 @@
 # Python examples (vulkan-torch)
 
+**🌏 Language / 语言:** [中文](PaddleOCR.zh-CN.md) · **English**
+
 | dir | model |
 |---|---|
 | [`ocr_py/`](ocr_py/) | PP-OCRv6 text detection + recognition (PaddleOCR port) |
@@ -59,7 +61,8 @@ Where any of them differ it's a few punctuation/quote glyphs, not content.
 
 Get them either way:
 
-- **Prebuilt** — `paddleocr.gguf` on HuggingFace
+- **Prebuilt** — [NeemaShioSe/paddleocr.gguf](https://huggingface.co/NeemaShioSe/paddleocr.gguf) on HuggingFace
+  (rec + det + dict)
 
 - **Convert locally** — `python tools/convert/convert_ocr_to_gguf.py`
 
