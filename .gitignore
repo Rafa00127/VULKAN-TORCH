@@ -5,6 +5,8 @@ build-*/
 __pycache__/
 .vs/
 .vscode/
+/tool/*
+!/tool/bench_ops.cpp
 移植参考/
 
 CLAUDE.md

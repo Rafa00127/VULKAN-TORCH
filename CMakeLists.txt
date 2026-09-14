@@ -78,6 +78,21 @@ if(BUILD_QUANTIZE)
 endif()
 
 # ---------------------------------------------------------------------------
+# Vulkan op microbenchmark against the vendored ggml (off by default).
+# The SAME tool/bench_ops.cpp is also built against an external reference ggml
+# via tools/bench_external/ (see tools/bench_ops_compare.py) to compare the two
+# Vulkan backends op-by-op.
+# ---------------------------------------------------------------------------
+option(BUILD_BENCH_OPS "Build the standalone Vulkan op microbenchmark" OFF)
+if(BUILD_BENCH_OPS)
+    add_executable(bench_ops tool/bench_ops.cpp)
+    target_link_libraries(bench_ops PRIVATE ggml::ggml)
+    target_compile_definitions(bench_ops PRIVATE
+        BENCH_FORK
+        BENCH_VARIANT="vendored-0.10.2")
+endif()
+
+# ---------------------------------------------------------------------------
 # python module (optional)
 # ---------------------------------------------------------------------------
 option(BUILD_PYTHON "Build the vulkantorch python module" ON)
