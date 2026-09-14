@@ -46,6 +46,13 @@ add_library(vulkantorch SHARED src/c_api.cpp)
 target_link_libraries(vulkantorch PRIVATE vulkantorch_core)
 target_compile_definitions(vulkantorch PRIVATE VT_SHARED)
 
+# GCC/MinGW prepend "lib" to shared libraries, but the .NET binding P/Invokes the
+# literal name "vulkantorch.dll" — drop the prefix on Windows so MSVC and MinGW
+# produce the same file name. (Linux keeps libvulkantorch.so.)
+if(WIN32)
+    set_target_properties(vulkantorch PROPERTIES PREFIX "")
+endif()
+
 # ---------------------------------------------------------------------------
 # tests + benchmarks
 # ---------------------------------------------------------------------------
