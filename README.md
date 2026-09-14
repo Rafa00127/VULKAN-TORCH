@@ -64,6 +64,12 @@
 python build_win.py
 ```
 
+或者用 GCC（MinGW/w64devkit）跑 `build.sh`——同样的东西，只是走 gcc/ninja：
+
+```bash
+sh build.sh        # -> build-gcc/，输出 build-gcc/vulkantorch.dll
+```
+
 产出：
 
 ```
@@ -72,6 +78,8 @@ vulkantorch/_vulkantorch.cp312-win_amd64.pyd   # Python 扩展（直接生在包
 ```
 
 没有 pybind11 时 Python 扩展会跳过，`vulkantorch.dll` 照常产出。
+
+> `build.sh` 走 GCC，默认关掉 Python 模块（`BUILD_PYTHON=OFF`），只出 `vulkantorch.dll`；想连 Python 扩展一起编就加 `-DBUILD_PYTHON=ON -Dpybind11_DIR=...`。
 
 ---
 

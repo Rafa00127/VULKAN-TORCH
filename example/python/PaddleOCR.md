@@ -94,6 +94,7 @@ ocr_py/
   weights.py    GGUF -> device tensors
   nn.py         op helpers (conv+BN-fold bias, hardsigmoid, layer_norm, pools)
   cli.py        python example/python/ocr_py/cli.py --line line.png
+  screen_translator.py  PyQt6 screen 划词翻译 tool: drag a box over on-screen text -> OCR -> (optional) LLM translate
 ```
 
 ### Notes
@@ -120,3 +121,19 @@ ocr_py/
   were why det+rec scored 74 % before.
 - BatchNorms are folded at conversion; the graph mirrors PaddleOCR layer for layer.
 - Needs the ops added in `src/ops.cpp`. No install — self-contained `.pyd`, just `sys.path`.
+
+### Screen translator tool
+
+[`screen_translator.py`](ocr_py/screen_translator.py) is a small PyQt6 desktop app built on the
+port: hit the hotkey (default `Ctrl+Alt+Shift+O`, customizable) or click the button, drag a box
+over any on-screen text, and it OCRs the box (rec-only, or det+rec for multi-line) and — if 翻译
+is ticked — translates it via an OpenAI-compatible LLM endpoint (base/model/key in the config).
+Handles vertical (manga) text automatically (rotates tall boxes 90°). UI language can be
+switched (中文/English) and the choice is saved.
+
+```bat
+python example\python\ocr_py\screen_translator.py
+```
+
+Settings (hotkey, LLM endpoint, UI language, …) live in `data/ocr/screen_translator.json`
+(gitignored) and are editable from the 「设置」 dialog.

@@ -93,6 +93,7 @@ ocr_py/
   weights.py    GGUF -> 设备张量
   nn.py         算子助手（conv+BN 折偏置、hardsigmoid、layer_norm、pool）
   cli.py        python example/python/ocr_py/cli.py --line line.png
+  screen_translator.py  PyQt6 屏幕划词翻译工具：框选屏幕文字 -> OCR ->（可选）LLM 翻译
 ```
 
 ### 说明
@@ -118,3 +119,18 @@ ocr_py/
   就是之前 det+rec 只有 74 % 的原因。
 - BatchNorm 在转换时已折叠；图与 PaddleOCR 逐层对应。
 - 需要 `src/ops.cpp` 里加的那些算子。无需安装——自包含 `.pyd`，只要 `sys.path`。
+
+### 屏幕划词翻译工具
+
+[`screen_translator.py`](ocr_py/screen_translator.py) 是基于本小模型的一个小 PyQt6 桌面工具：
+按快捷键（默认 `Ctrl+Alt+Shift+O`，可自定义）或点按钮，在屏幕上框选任意文字，它会识别框内内容
+（默认只识别；勾「多行/整块」走 det+rec）——勾上「翻译」再用 OpenAI 兼容的 LLM 端点翻译
+（base/model/key 都在 config 里）。竖排（漫画）文字自动处理（瘦高的框转 90°）。界面语言可切换
+（中文/English）且会记住。
+
+```bat
+python example\python\ocr_py\screen_translator.py
+```
+
+设置（快捷键、LLM 端点、界面语言……）存在 `data/ocr/screen_translator.json`（已 gitignore），
+可在「设置」对话框里改。

@@ -1,25 +1,24 @@
 """划词翻译器 — draw a box over any on-screen text, OCR it (PP-OCRv6), optionally
-translate it with an LLM (DeepSeek, OpenAI-compatible).
+translate it with an LLM (OpenAI-compatible endpoint).
 
 PyQt6 UI. Click 「截屏划词」(or the global hotkey) -> the tool hides, a full-screen
 overlay lets you drag a box (screen stays as-is, only the box is outlined) -> the box is
-recognised (rec-only -> text) and, if 翻译 is ticked, sent to the LLM.
+recognised (rec-only -> text) and, if the translate box is ticked, sent to the LLM.
 
     python example/python/ocr_py/screen_translator.py [--config PATH]
 
-LLM + hotkey + 翻译/方向/多行 + target language all live in the config file (default:
-<repo>/data/ocr/screen_translator.json, gitignored) and are editable from the 「设置」
-dialog. The config carries the OpenAI-compatible endpoint:
+The UI is bilingual (中文 / English); pick the language in 「设置」/ Settings (saved in
+config; takes effect on restart). LLM + hotkey + options live in the config file
+(default: <repo>/data/ocr/screen_translator.json, gitignored):
 
-    "api_base":  "https://api.deepseek.com",   # any OpenAI-compatible base URL (overridable)
-    "api_model": "",                             # <-- 填模型名 (no default; must be set)
-    "api_key":   ""                             # <-- 填这里（或设置里填）
+    "ui_lang":   "zh",                 # "zh" | "en"
+    "api_base":  "https://api.deepseek.com",   # any OpenAI-compatible base URL
+    "api_model": "",                   # must be set (no default)
+    "api_key":   ""                    # fill in here or in Settings
 
 No paths are hardcoded; the API key lives in the (gitignored) config.
-
-The hotkey is a SYSTEM-WIDE hotkey (Windows RegisterHotKey); if that fails it falls back
-to a window-scoped shortcut. OCR + network run on one persistent worker thread (an Ocr
-instance is bound to one thread), so the UI never blocks.
+The hotkey is a SYSTEM-WIDE hotkey (Windows RegisterHotKey); OCR + network run on one
+persistent worker thread, so the UI never blocks.
 """
 import argparse
 import ctypes
@@ -44,13 +43,93 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QDialog, QVBoxL
                              QHBoxLayout, QFormLayout, QPushButton, QCheckBox, QPlainTextEdit,
                              QLabel, QComboBox, QKeySequenceEdit, QDialogButtonBox, QLineEdit)
 
+# (native name, English name) — the target language list; shown as "→ <native>"
 LANGUAGES = [("中文", "Chinese"), ("English", "English"), ("日本語", "Japanese"),
              ("한국어", "Korean"), ("Español", "Spanish"), ("Français", "French")]
 
 DEFAULT_CONFIG = {"hotkey": "Ctrl+Alt+Shift+O", "target": "Chinese", "translate": False,
-                  "det": False, "orient": "auto", "reasoning": "off",
+                  "det": False, "orient": "auto", "reasoning": "off", "ui_lang": "zh",
                   "api_base": "https://api.deepseek.com", "api_model": "",
                   "api_key": ""}
+
+
+# ── i18n ─────────────────────────────────────────────────────────────────────────
+
+STRINGS = {
+    "zh": {
+        "app_title": "划词翻译 (PP-OCRv6 + LLM)",
+        "btn_capture": "截屏划词", "btn_settings": "设置",
+        "chk_det": "多行/整块",
+        "chk_det_tip": "勾选 = det+rec：框里可有多行。不勾 = 整框当一行（快 ~50×）。",
+        "chk_translate": "翻译",
+        "reason_off": "思考:关", "reason_low": "思考:低", "reason_high": "思考:高", "reason_max": "思考:最高",
+        "reason_tip": "仅翻译时生效：off = 关闭思考；low/high/max = 开启思考并设推理强度。",
+        "dir_auto": "方向:自动", "dir_h": "方向:横排", "dir_v": "方向:竖排",
+        "dir_tip": "竖排（漫画/日文竖排）：裁框后逆时针转 90° 再识别。\n自动 = 按裁剪框的高宽比判断（高>宽 视为竖排）。",
+        "lbl_src": "识别文本", "lbl_dst": "翻译",
+        "status_hotkey_global": "快捷键 {key}：全局可用 · 点「{btn}」或按快捷键开始",
+        "status_hotkey_scope": "快捷键 {key}：仅窗口聚焦时有效（该组合可能被占用） · 点「{btn}」或按快捷键开始",
+        "status_capture_failed": "截图失败: {err}",
+        "status_capturing": "识别中… ({w}×{h})",
+        "status_recognized": "识别完成 · {n} 字{tail}",
+        "status_translating": "  （翻译中…）",
+        "status_done": "完成 · {n} 字（已翻译）",
+        "status_error": "出错: ",
+        "status_settings_saved": "设置已保存",
+        "status_bad_hotkey": "设置已保存；但快捷键 '{key}' 无效（需修饰键+键），未改。",
+        "status_lang_changed": "界面语言已保存 —— 重启程序后生效。",
+        "settings_title": "设置",
+        "settings_hotkey": "截图快捷键",
+        "settings_hotkey_tip": "点这里然后按组合键。需要至少一个修饰键（Ctrl/Alt/Shift/Win）。",
+        "settings_uilang": "界面语言",
+        "settings_model": "模型",
+        "ph_base": "https://api.deepseek.com  (OpenAI 兼容 base url)",
+        "ph_model": "填模型名，如 deepseek-chat / deepseek-reasoner",
+        "ph_key": "在此填入 API key（保存进 config）",
+        "err_no_key": "未设置 API key —— 在「设置」里填 api_key（存进 config）",
+        "err_no_model": "未设置模型名 —— 在「设置」里填 api_model（如 deepseek-chat / deepseek-reasoner）",
+    },
+    "en": {
+        "app_title": "Screen Translator (PP-OCRv6 + LLM)",
+        "btn_capture": "Capture", "btn_settings": "Settings",
+        "chk_det": "Multi-line",
+        "chk_det_tip": "On = det+rec: the box may hold several lines. Off = treat the whole box as one line (~50× faster).",
+        "chk_translate": "Translate",
+        "reason_off": "Think:off", "reason_low": "Think:low", "reason_high": "Think:high", "reason_max": "Think:max",
+        "reason_tip": "Translation only: off = no thinking; low/high/max = enable thinking at that reasoning effort.",
+        "dir_auto": "Dir:auto", "dir_h": "Dir:horiz", "dir_v": "Dir:vert",
+        "dir_tip": "Vertical (manga / vertical Japanese): rotate the crop 90° CCW before OCR.\nAuto = decide by the box's aspect ratio (taller than wide → vertical).",
+        "lbl_src": "Recognized text", "lbl_dst": "Translation",
+        "status_hotkey_global": "Hotkey {key}: system-wide · click \"{btn}\" or press the hotkey to start",
+        "status_hotkey_scope": "Hotkey {key}: only while this window is focused (combo may be taken) · click \"{btn}\" or press the hotkey",
+        "status_capture_failed": "Capture failed: {err}",
+        "status_capturing": "Recognizing… ({w}×{h})",
+        "status_recognized": "Recognized · {n} chars{tail}",
+        "status_translating": "  (translating…)",
+        "status_done": "Done · {n} chars (translated)",
+        "status_error": "Error: ",
+        "status_settings_saved": "Settings saved",
+        "status_bad_hotkey": "Saved, but hotkey '{key}' is invalid (needs a modifier + a key) — left unchanged.",
+        "status_lang_changed": "UI language saved — restart to apply.",
+        "settings_title": "Settings",
+        "settings_hotkey": "Capture hotkey",
+        "settings_hotkey_tip": "Click, then press the combo. Needs at least one modifier (Ctrl/Alt/Shift/Win).",
+        "settings_uilang": "UI language",
+        "settings_model": "Model",
+        "ph_base": "https://api.deepseek.com  (OpenAI-compatible base url)",
+        "ph_model": "model name, e.g. deepseek-chat / deepseek-reasoner",
+        "ph_key": "paste API key here (saved into config)",
+        "err_no_key": "no API key set — fill api_key in Settings (stored in config)",
+        "err_no_model": "no model set — fill api_model in Settings (e.g. deepseek-chat / deepseek-reasoner)",
+    },
+}
+
+_LANG = "zh"
+
+
+def t(_key, **kw):
+    s = STRINGS.get(_LANG, {}).get(_key) or STRINGS["zh"].get(_key) or _key
+    return s.format(**kw) if kw else s
 
 
 # ── settings file ───────────────────────────────────────────────────────────────
@@ -194,7 +273,7 @@ class Worker(QThread):
                     from ocr_py.ocr import Ocr
                     self._ocr = Ocr()
                 text = self._ocr.read_line(arr, det=det)
-                self.recognized.emit(text)          # show 原文 the moment OCR is done
+                self.recognized.emit(text)          # show source the moment OCR is done
                 trans = ""
                 if do_translate and text.strip():
                     trans = translate_text(text, target, self._llm, reasoning)
@@ -207,14 +286,14 @@ def translate_text(text, target, llm, reasoning="off"):
     """Chat completion against an OpenAI-compatible endpoint (base/model/key from config).
 
     reasoning ∈ {off, low, high, max}: off disables thinking
-    (extra_body thinking.type=disabled), the rest enable it with reasoning_effort."""
+    (thinking.type=disabled), the rest enable it with reasoning_effort."""
     import requests
     key = (llm.get("key") or "").strip()
     if not key:
-        raise RuntimeError("未设置 API key —— 在「设置」里填 api_key（存进 config）")
+        raise RuntimeError(t("err_no_key"))
     model = (llm.get("model") or "").strip()
     if not model:
-        raise RuntimeError("未设置模型名 —— 在「设置」里填 api_model（如 deepseek-chat / deepseek-reasoner）")
+        raise RuntimeError(t("err_no_model"))
     base = (llm.get("base") or "https://api.deepseek.com").strip()
 
     payload = {
@@ -299,21 +378,30 @@ class CaptureOverlay(QWidget):
 class SettingsDialog(QDialog):
     def __init__(self, parent, cfg):
         super().__init__(parent)
-        self.setWindowTitle("设置")
+        self.setWindowTitle(t("settings_title"))
         form = QFormLayout(self)
         self.keyedit = QKeySequenceEdit(QKeySequence(cfg.get("hotkey", DEFAULT_CONFIG["hotkey"])))
-        self.keyedit.setToolTip("点这里然后按组合键。需要至少一个修饰键（Ctrl/Alt/Shift/Win）。")
-        form.addRow("截图快捷键", self.keyedit)
+        self.keyedit.setToolTip(t("settings_hotkey_tip"))
+        form.addRow(t("settings_hotkey"), self.keyedit)
+
+        self.cmb_ui = QComboBox()
+        for label, val in [("中文", "zh"), ("English", "en")]:
+            self.cmb_ui.addItem(label, val)
+        for i in range(self.cmb_ui.count()):
+            if self.cmb_ui.itemData(i) == cfg.get("ui_lang", "zh"):
+                self.cmb_ui.setCurrentIndex(i)
+                break
+        form.addRow(t("settings_uilang"), self.cmb_ui)
 
         self.ed_base = QLineEdit(cfg.get("api_base", ""))
-        self.ed_base.setPlaceholderText("https://api.deepseek.com  (OpenAI 兼容 base url)")
+        self.ed_base.setPlaceholderText(t("ph_base"))
         self.ed_model = QLineEdit(cfg.get("api_model", ""))
-        self.ed_model.setPlaceholderText("填模型名，如 deepseek-chat / deepseek-reasoner")
+        self.ed_model.setPlaceholderText(t("ph_model"))
         self.ed_key = QLineEdit(cfg.get("api_key", ""))
         self.ed_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.ed_key.setPlaceholderText("在此填入 API key（保存进 config）")
+        self.ed_key.setPlaceholderText(t("ph_key"))
         form.addRow("API base", self.ed_base)
-        form.addRow("模型", self.ed_model)
+        form.addRow(t("settings_model"), self.ed_model)
         form.addRow("API key", self.ed_key)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
@@ -324,6 +412,9 @@ class SettingsDialog(QDialog):
 
     def hotkey(self):
         return self.keyedit.keySequence().toString()
+
+    def ui_lang(self):
+        return self.cmb_ui.currentData()
 
     def llm(self):
         return {"api_base": self.ed_base.text().strip(),
@@ -340,7 +431,7 @@ class MainWindow(QMainWindow):
         self._cfg = cfg
         self._cfg_path = cfg_path
         self._overlay = None
-        self.setWindowTitle("划词翻译 (PP-OCRv6 + LLM)")
+        self.setWindowTitle(t("app_title"))
         self.resize(460, 380)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
@@ -356,26 +447,26 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(central)
 
         top = QHBoxLayout()
-        self.btn = QPushButton("截屏划词")
+        self.btn = QPushButton(t("btn_capture"))
         self.btn.setStyleSheet("QPushButton{padding:8px;font-weight:bold}")
         self.btn.clicked.connect(self.capture)
-        self.chk_det = QCheckBox("多行/整块")
-        self.chk_det.setToolTip("勾选 = det+rec：框里可有多行。不勾 = 整框当一行（快 ~50×）。")
-        self.chk = QCheckBox("翻译")
+        self.chk_det = QCheckBox(t("chk_det"))
+        self.chk_det.setToolTip(t("chk_det_tip"))
+        self.chk = QCheckBox(t("chk_translate"))
         self.cmb = QComboBox()
         for label, name in LANGUAGES:
             self.cmb.addItem(f"→ {label}", name)
         self.cmb_reason = QComboBox()
-        for label, val in [("思考:关", "off"), ("思考:低", "low"), ("思考:高", "high"), ("思考:最高", "max")]:
-            self.cmb_reason.addItem(label, val)
-        self.cmb_reason.setToolTip("仅翻译时生效：off = 关闭思考；low/high/max = 开启思考并设推理强度。")
-        self.btn_set = QPushButton("设置")
+        for key, val in [("reason_off", "off"), ("reason_low", "low"),
+                         ("reason_high", "high"), ("reason_max", "max")]:
+            self.cmb_reason.addItem(t(key), val)
+        self.cmb_reason.setToolTip(t("reason_tip"))
+        self.btn_set = QPushButton(t("btn_settings"))
         self.btn_set.clicked.connect(self.open_settings)
         self.cmb_dir = QComboBox()
-        for label, val in [("方向:自动", "auto"), ("方向:横排", "h"), ("方向:竖排", "v")]:
-            self.cmb_dir.addItem(label, val)
-        self.cmb_dir.setToolTip("竖排（漫画/日文竖排）：裁框后逆时针转 90° 再识别。\n"
-                                "自动 = 按裁剪框的高宽比判断（高>宽 视为竖排）。")
+        for key, val in [("dir_auto", "auto"), ("dir_h", "h"), ("dir_v", "v")]:
+            self.cmb_dir.addItem(t(key), val)
+        self.cmb_dir.setToolTip(t("dir_tip"))
         top.addWidget(self.btn)
         top.addWidget(self.chk_det)
         top.addWidget(self.cmb_dir)
@@ -386,11 +477,11 @@ class MainWindow(QMainWindow):
         top.addStretch(1)
         lay.addLayout(top)
 
-        lay.addWidget(QLabel("识别文本"))
+        lay.addWidget(QLabel(t("lbl_src")))
         self.txt = QPlainTextEdit()
         self.txt.setReadOnly(True)
         lay.addWidget(self.txt, 2)
-        lay.addWidget(QLabel("翻译"))
+        lay.addWidget(QLabel(t("lbl_dst")))
         self.trans = QPlainTextEdit()
         self.trans.setReadOnly(True)
         lay.addWidget(self.trans, 3)
@@ -421,10 +512,9 @@ class MainWindow(QMainWindow):
         self._shortcut = QShortcut(QKeySequence(cfg.get("hotkey", DEFAULT_CONFIG["hotkey"])), self)
         self._shortcut.activated.connect(self.capture)
         self._apply_hotkey(cfg.get("hotkey", DEFAULT_CONFIG["hotkey"]), announce=False)
-        self.statusBar().showMessage(
-            f"快捷键 {self._cfg['hotkey']}："
-            f"{'全局可用' if self._hotkey_global else '仅窗口聚焦时有效（该组合可能被占用）'}"
-            f" · 点「截屏划词」或按快捷键开始")
+        self.statusBar().showMessage(t(
+            "status_hotkey_global" if self._hotkey_global else "status_hotkey_scope",
+            key=self._cfg["hotkey"], btn=t("btn_capture")))
 
     def _apply_hotkey(self, spec, announce=True):
         gok = self._hotkey.set(spec)
@@ -433,7 +523,7 @@ class MainWindow(QMainWindow):
         except Exception:      # noqa: BLE001
             pass
         if announce:
-            self.btn.setToolTip(f"快捷键 {spec}（{'全局' if gok else '仅窗口内'}）")
+            self.btn.setToolTip(f"{spec} ({'global' if gok else 'window'})")
         self._hotkey_global = gok
 
     # -- capture ------------------------------------------------------------------
@@ -449,7 +539,7 @@ class MainWindow(QMainWindow):
             img = ImageGrab.grab(all_screens=True)
         except Exception as e:      # noqa: BLE001
             self.show()
-            self.statusBar().showMessage(f"截图失败: {e}")
+            self.statusBar().showMessage(t("status_capture_failed", err=e))
             return
 
         geo = QGuiApplication.screens()[0].geometry()
@@ -475,23 +565,23 @@ class MainWindow(QMainWindow):
         if crop is None:
             return
         arr = np.asarray(crop.convert("RGB"))
-        self.statusBar().showMessage(f"识别中… ({arr.shape[1]}×{arr.shape[0]})")
+        self.statusBar().showMessage(t("status_capturing", w=arr.shape[1], h=arr.shape[0]))
         self._worker.submit(arr, self.chk.isChecked(), self.cmb.currentData(),
                             self.chk_det.isChecked(), self.cmb_dir.currentData(),
                             self.cmb_reason.currentData())
 
     def _on_recognized(self, text):
-        self.txt.setPlainText(text)     # 原文 shows as soon as OCR finishes
-        tail = "  （翻译中…）" if self.chk.isChecked() else ""
-        self.statusBar().showMessage(f"识别完成 · {len(text)} 字{tail}")
+        self.txt.setPlainText(text)     # source shows as soon as OCR finishes
+        tail = t("status_translating") if self.chk.isChecked() else ""
+        self.statusBar().showMessage(t("status_recognized", n=len(text), tail=tail))
 
     def _on_translated(self, trans):
         self.trans.setPlainText(trans)
         if trans:
-            self.statusBar().showMessage(f"完成 · {len(self.txt.toPlainText())} 字（已翻译）")
+            self.statusBar().showMessage(t("status_done", n=len(self.txt.toPlainText())))
 
     def _on_error(self, msg):
-        self.statusBar().showMessage("出错: " + msg)
+        self.statusBar().showMessage(t("status_error") + msg)
 
     # -- settings ------------------------------------------------------------------
 
@@ -501,13 +591,16 @@ class MainWindow(QMainWindow):
             llm = dlg.llm()
             self._cfg.update(llm)
             self._worker.set_llm(llm["api_base"], llm["api_model"], llm["api_key"])
+            lang_changed = dlg.ui_lang() != self._cfg.get("ui_lang")
+            self._cfg["ui_lang"] = dlg.ui_lang()
             spec = dlg.hotkey()
             if parse_hotkey(spec) is None:
-                self.statusBar().showMessage(f"设置已保存；但快捷键 '{spec}' 无效（需修饰键+键），未改。")
+                self.statusBar().showMessage(t("status_bad_hotkey", key=spec))
             else:
                 self._cfg["hotkey"] = spec
                 self._apply_hotkey(spec)
-                self.statusBar().showMessage("设置已保存")
+                self.statusBar().showMessage(t("status_lang_changed") if lang_changed
+                                             else t("status_settings_saved"))
             self._persist()
         return
 
@@ -532,15 +625,18 @@ def _pil_to_qimage(img):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="划词翻译 (PP-OCRv6 + LLM)")
+    global _LANG
+    ap = argparse.ArgumentParser(description="Screen translator (PP-OCRv6 + LLM)")
     ap.add_argument("--config", default=os.environ.get(
         "OCR_TRANSLATOR_CONFIG", os.path.join(ROOT, "data", "ocr", "screen_translator.json")),
         help="settings file (default: <repo>/data/ocr/screen_translator.json, gitignored)")
+    ap.add_argument("--lang", choices=["zh", "en"], help="UI language (overrides config)")
     ap.add_argument("--selftest", action="store_true", help="construct + smoke-test, no GUI loop")
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config)
-    save_config(args.config, cfg)   # write back the full schema (so api_base/model/key are visible)
+    save_config(args.config, cfg)   # write back the full schema (so all keys are visible)
+    _LANG = args.lang or cfg.get("ui_lang", "zh")
 
     app = QApplication(sys.argv[:1])
     win = MainWindow(args, cfg, args.config)
@@ -549,7 +645,7 @@ def main(argv=None):
         from ocr_py.ocr import Ocr   # verifies the sys.path wiring (no model load)
         dlg = SettingsDialog(win, cfg)   # catch field/import errors without opening it
         safe = {k: ("<set>" if k == "api_key" and v else v) for k, v in win._cfg.items()}
-        print(f"OK: ocr_py import ok; config={args.config}")
+        print(f"OK: ocr_py import ok; ui_lang={_LANG}; config={args.config}")
         print(f"    cfg={safe}")   # api_key redacted
         print(f"    hotkey_global={getattr(win, '_hotkey_global', None)}; "
               f"api_key={'set' if cfg.get('api_key') else 'empty'}")
