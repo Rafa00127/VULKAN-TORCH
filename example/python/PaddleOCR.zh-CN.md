@@ -44,14 +44,17 @@ text = ocr.read_line(rgb, det=True)       # 一块区域      -> det+rec -> 文�
 `match vk/pt` 是每个 GPU 结果与 CPU 基准的吻合度（1 − CER）——三者跑的是同一套权重，
 所以不是真值准确率。
 
-| 输入 | 模式 | vulkan-torch | PyTorch (ROCm) | CPU | match vk/pt |
-|---|---|---|---|---|---|
-| A | rec | **1.2 s** | 1.0 s | 16.2 s | **99.95 / 100 %** |
-| A | det+rec | **3.4 s** | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
-| B | det+rec | **0.11 s** | 0.10 s | 0.8 s | **100 / 100 %** |
+| 输入 | 模式 | vulkan-torch（新输入尺寸） | vulkan-torch（缓存命中） | PyTorch (ROCm) | CPU | match vk/pt |
+|---|---|---|---|---|---|---|
+| A | rec | **1.2 s** | — | 1.0 s | 16.2 s | **99.95 / 100 %** |
+| A | det+rec | **3.1 s** | — | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
+| B | det+rec | **0.15 s** | **0.10 s** | 0.10 s | 0.8 s | **100 / 100 %** |
 
-**比 CPU 流水线快 7–14×**，比 ROCm 版**慢约 1.2–1.5×**——差距几乎全在检测
-（那边的卷积快 2–3×）；识别接近持平。换来的是 vulkan-torch 能在任何 Vulkan 卡上跑，
+vulkan-torch 每换一个输入尺寸就要建一次计算图，比 eager 的 PyTorch 多付一点这个开销。
+固定形状的识别——视频字幕、galgame 台词、任何裁剪尺寸会重复的场景——**没有差距**
+（B：0.10 s vs torch 0.10 s）。
+
+**任何情况下都比 CPU 流水线快 7–14×**。换来的是 vulkan-torch 能在任何 Vulkan 卡上跑，
 **不需要 ROCm 或 CUDA**。
 
 哪里不同也就是几个标点/引号字形，内容没差。
@@ -96,30 +99,6 @@ ocr_py/
   screen_translator.py  PyQt6 屏幕划词翻译工具：框选屏幕文字 -> OCR ->（可选）LLM 翻译
 ```
 
-### 说明
-
-- **默认只做 rec** —— 快得多，行已裁好时够用。
-  `det=True` 在一块区域上跑完整 det+rec，返回换行拼接的文本。
-- **默认 F32 —— 保持它。** F16 把权重减半（det 88→44 MB，rec 76→38 MB），但
-  **并不更快**（det+rec 是卷积受限，不是带宽受限；测试图上实测一致），而且
-  **略不准**：f16 的 det 框边缘略糙、f16 的 rec 会多吐几个乱码字符
-  （比如 QQ 截图 f32 给 118 个干净字、f16 给 119 个含 3 个 `�`）。除非显存紧张，
-  否则用 `OCR_PRECISION=f16`。
-- **CTC 在 GPU 上解码**（`rec.forward_ids` → `mt.argmax`）：图直接吐 T 个 int32 id，
-  而不是 T×18710 的 softmax，于是每行约 17 MB 的 logits 不再过 PCIe
-  （那次传输占了约一半运行时间）。这些 id 与对 softmax 做 argmax 逐位一致。
-  测试图上 14.1 → 9.6 ms/行。
-- **det 与 PaddleOCR 对齐。** OCR 的*流水线*会覆盖模型自带的
-  `inference.yml`，所以要用流水线的值、而不是模型的：
-  - 预处理 `limit_side_len=64`（不是 736）—— `paddlex/configs/pipelines/OCR.yaml`；
-  - 后处理 `thresh=0.3, box_thresh=0.6, unclip=1.5`（不是 0.2/0.45/1.4），外加
-    `SortQuadBoxes`（从上到下、从左到右）。
-  小输入还让 det 变便宜了：老的 224×4000 输入需要 `conv2d_tiled` 来
-  绕开 Vulkan 的 2 GiB 单缓冲上限；64×N 时不需要。这两个 bug 合在一起
-  就是之前 det+rec 只有 74 % 的原因。
-- BatchNorm 在转换时已折叠；图与 PaddleOCR 逐层对应。
-- 需要 `src/ops.cpp` 里加的那些算子。无需安装——自包含 `.pyd`，只要 `sys.path`。
-
 ### 屏幕划词翻译工具
 
 [`screen_translator.py`](ocr_py/screen_translator.py) 是基于本小模型的一个小 PyQt6 桌面工具：
@@ -134,3 +113,10 @@ python example\python\ocr_py\screen_translator.py
 
 设置（快捷键、LLM 端点、界面语言……）存在 `data/ocr/screen_translator.json`（已 gitignore），
 可在「设置」对话框里改。
+
+### 说明
+
+- **默认只做 rec** —— `det=True` 在一块区域上跑完整 det+rec，返回换行拼接的文本。
+- **默认 F32** —— 更准，而且 f16 并不会更快。
+- **CTC 在 GPU 上解码**
+- **det 与 PaddleOCR 对齐。** 

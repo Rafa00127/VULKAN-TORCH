@@ -397,6 +397,14 @@ Tensor conv2d(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, 
     return Tensor(r, &g);
 }
 
+Tensor conv2d_direct(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0,
+                     int d1) {
+    Graph& g = cur();
+    ggml_tensor* r = ggml_conv_2d_direct(g.ctx(), a.raw(), b.raw(), s0, s1, p0, p1, d0, d1);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
 Tensor conv2d_tiled(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0,
                     int d1, int n_tiles) {
     Graph& g = cur();

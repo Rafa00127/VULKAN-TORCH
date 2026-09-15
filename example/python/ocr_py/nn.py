@@ -27,6 +27,16 @@ def conv_tiled(x, w, b, sh=1, sw=1, p=1, d=1, pw=None, n_tiles=0):
     return _cadd(y, b, w.shape[0]) if b is not None else y
 
 
+def conv_direct(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):
+    """conv2d as one fused (implicit-GEMM) node -- no im2col tensor is materialised,
+    so it is not subject to the per-buffer size limit that conv_tiled works around.
+    Identical result; it wins once the output map is large enough for the saved
+    im2col traffic to pay for itself, and loses on small maps. See ``det._conv``."""
+    pw = p if pw is None else pw
+    y = mt.conv2d_direct(w, x, sw, sh, pw, p, d, d)
+    return _cadd(y, b, w.shape[0]) if b is not None else y
+
+
 def conv_dw(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):
     pw = p if pw is None else pw
     y = mt.conv2d_dw(w, x, sw, sh, pw, p, d, d)

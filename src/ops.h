@@ -95,6 +95,13 @@ Tensor conv1d_dw(const Tensor& x, const Tensor& w, int stride, int pad, int dila
 // conv2d (stock ggml_conv_2d). a (kernel): PT [OC, IC, KH, KW]; b (data): PT
 //   [N, IC, IH, IW] -> PT [N, OC, OH, OW].
 Tensor conv2d(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0, int d1);
+// conv2d via ggml_conv_2d_direct: one fused GGML_OP_CONV_2D node (implicit GEMM inside
+// the backend) instead of the im2col -> reshape -> matmul composite. Nothing materialises
+// the KH*KW*IC * OH*OW im2col tensor, so unlike conv2d it cannot fall off the fast path
+// on a per-buffer size limit. Same args, same output as conv2d for N == 1.
+// ggml.h calls this "not available in all backends" -- CPU and Vulkan both support it here.
+Tensor conv2d_direct(const Tensor& a, const Tensor& b, int s0, int s1, int p0, int p1, int d0,
+                     int d1);
 // conv2d with the output width split into ``n_tiles`` chunks so each chunk's im2col
 // intermediate stays small (ggml_conv_2d materialises KH*KW*IC * OH*OW_tile). Exact
 // same result as conv2d. ``n_tiles <= 0`` picks a count to keep each im2col under
