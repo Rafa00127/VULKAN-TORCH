@@ -208,9 +208,13 @@ For the long-audio synth above (~550 frames / 21.5 s audio), the RTFs: **C++ 0.2
 Both examples port [HiggsTTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) (a 4B TTS):
 
 ```
-reference audio ──► encode_ref ──► RVQ codes ──┐
-                   (codec)                     ├──► Qwen3 36-layer AR ──► codes ──► DAC decode ──► wav
-   text ──────────► tokenizer ──► prompt ──────┘        (backbone)                   (decoder)
+reference audio ──► encode_ref ──► RVQ codes ──┐(their length: how many audio
+                   (codec)                     │ placeholders to reserve)
+                                                └──────────┐
+                                                           ▼
+text / ref text ──► tokenizer ──► ids ──► build_prompt ──► prompt ──┐
+                                                                    ├──► Qwen3 36-layer AR ──► codes ──► DAC decode ──► wav
+              RVQ codes (the codes themselves, fed alongside prompt)─┘        (backbone)                   (decoder)
 ```
 
 - **Python**: `example/python/higgstts_py/` (`model.py` / `ar.py` / `decode.py` / `tts.py`)
@@ -270,12 +274,12 @@ IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
 
 | Text length | Audio | GPT-2 AR | s2mel (codec+CFM) | BigVGAN | Inference total | RTF |
 |---|---|---|---|---|---|---|
-| 11 chars | 3.51 s | 625 ms | 631 ms | 475 ms | 1.98 s | 0.564 |
-| 33 chars | 7.30 s | 1059 ms | 797 ms | 852 ms | 2.95 s | 0.404 |
-| 89 chars | 19.04 s | 2384 ms | 2045 ms | 2220 ms | 6.90 s | 0.362 |
+| 11 chars | 3.51 s | 442 ms | 631 ms | 450 ms | 1.77 s | 0.504 |
+| 33 chars | 8.94 s | 802 ms | 991 ms | 977 ms | 3.01 s | 0.337 |
+| 93 chars | 18.40 s | 1391 ms | 1992 ms | 2123 ms | 5.76 s | 0.313 |
 
 For reference, the official 2.5 RTF on an **RTX 4090** (`kv_cache=True`): bf16 ~0.20, fp32 ~0.21 (7–200 chars).
-This port is roughly **1.75×** slower, mostly due to hardware (7900 XTX vs 4090) and the official using bf16 + CUDA-fused kernels, versus f16 GGUF + a generic Vulkan backend here.
+This port is roughly **1.5×** slower, mostly due to hardware (7900 XTX vs 4090) and the official using bf16 + CUDA-fused kernels, versus f16 GGUF + a generic Vulkan backend here.
 For a single long sentence the three stages (AR / s2mel / BigVGAN) take almost equal time. Weight load is ~2–3 s (not counted above).
 
 ## Example Model: PP-OCRv6 (PaddleOCR)

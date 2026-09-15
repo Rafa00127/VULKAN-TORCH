@@ -209,9 +209,13 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 两边的示例都把 [HiggsTTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b)（4B TTS）移植了过来：
 
 ```
-参考音频 ──► encode_ref ──► RVQ 码 ──┐
-             (codec)                 ├──► Qwen3 36层 AR ──► 码 ──► DAC 解码 ──► wav
-   文本 ────► tokenizer ────► prompt ┘       (backbone)              (decoder)
+参考音频 ──► encode_ref ──► RVQ 码 ──┐(码长：给参考音频留占位符)
+             (codec)                │
+                                     └──────────┐
+                                                ▼
+文本/参考文本 ──► tokenizer ──► ids ──► build_prompt ──► prompt ──┐
+                                                                  ├──► Qwen3 36层 AR ──► 码 ──► DAC 解码 ──► wav
+                       RVQ 码（码本身，和 prompt 一起喂进 AR）─────┘        (backbone)         (decoder)
 ```
 
 - **Python**：`example/python/higgstts_py/`（`model.py` / `ar.py` / `decode.py` / `tts.py`）
@@ -272,12 +276,12 @@ IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
 
 | 文本长度 | 音频 | GPT-2 AR | s2mel (codec+CFM) | BigVGAN | 推理总 | RTF |
 |---|---|---|---|---|---|---|
-| 11 字 | 3.51 s | 625 ms | 631 ms | 475 ms | 1.98 s | 0.564 |
-| 33 字 | 7.30 s | 1059 ms | 797 ms | 852 ms | 2.95 s | 0.404 |
-| 89 字 | 19.04 s | 2384 ms | 2045 ms | 2220 ms | 6.90 s | 0.362 |
+| 11 字 | 3.51 s | 442 ms | 631 ms | 450 ms | 1.77 s | 0.504 |
+| 33 字 | 8.94 s | 802 ms | 991 ms | 977 ms | 3.01 s | 0.337 |
+| 93 字 | 18.40 s | 1391 ms | 1992 ms | 2123 ms | 5.76 s | 0.313 |
 
 对照官方在 **RTX 4090** 上公布的 2.5 RTF（`kv_cache=True`）：bf16 ~0.20、fp32 ~0.21（7~200 字）。
-本移植折算约慢 **1.75×**，差距主要来自硬件（7900 XTX vs 4090）和官方用 bf16 + CUDA 融合算子，这里是 f16 GGUF + 通用 Vulkan 后端。
+本移植折算约慢 **1.5×**，差距主要来自硬件（7900 XTX vs 4090）和官方用 bf16 + CUDA 融合算子，这里是 f16 GGUF + 通用 Vulkan 后端。
 长句单段时 AR / s2mel / BigVGAN 三段耗时几乎均分。权重加载约 2–3 s（不计入上表）。
 
 ## 示例模型：PP-OCRv6（PaddleOCR）
