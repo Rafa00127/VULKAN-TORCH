@@ -13,28 +13,37 @@ def _cadd(y, b, oc):
     return mt.add(y, mt.reshape(b, [oc, 1, 1]))
 
 
+# There are two conv2d paths. The fused one (`conv2d_direct`) emits a single implicit-GEMM
+# node and materialises no im2col tensor at all, so past a certain output size it wins --
+# on time, and again on capture, which is the dominant cost when the input size keeps
+# changing (a hand-drawn screenshot is never the same twice). Below that size the tiled
+# im2col path is faster, and 3x3 is an exception at every size we measured.
+# Same result either way; only the kernel and the shape of the graph differ.
+_FUSED_MIN_SPATIAL = 40000
+
+
+def conv2d_router(x, w, b=None, sh=1, sw=1, p=1, d=1, pw=None, n_tiles=0):
+    """The single conv2d entry point: picks the path by shape, then folds in the bias.
+
+    ``n_tiles`` only concerns the tiled path -- the fused one needs no tiling."""
+    pw = p if pw is None else pw
+    kh, kw = w.shape[2], w.shape[3]
+    fused = (kh, kw) != (3, 3) and \
+        (x.shape[1] + 2 * p - (kh - 1) * d) * (x.shape[2] + 2 * pw - (kw - 1) * d) \
+        >= _FUSED_MIN_SPATIAL
+    y = (mt.conv2d_direct(w, x, sw, sh, pw, p, d, d) if fused else
+         mt.conv2d_tiled(w, x, sw, sh, pw, p, d, d, n_tiles))
+    return _cadd(y, b, w.shape[0]) if b is not None else y
+
+
 def conv(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):
     """Pad H by p, W by pw (default = p)."""
-    pw = p if pw is None else pw
-    y = mt.conv2d(w, x, sw, sh, pw, p, d, d)
-    return _cadd(y, b, w.shape[0]) if b is not None else y
+    return conv2d_router(x, w, b, sh, sw, p, d, pw)
 
 
 def conv_tiled(x, w, b, sh=1, sw=1, p=1, d=1, pw=None, n_tiles=0):
-    """conv2d with the output width tiled so the im2col stays small (n_tiles=0: auto)."""
-    pw = p if pw is None else pw
-    y = mt.conv2d_tiled(w, x, sw, sh, pw, p, d, d, n_tiles)
-    return _cadd(y, b, w.shape[0]) if b is not None else y
-
-
-def conv_direct(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):
-    """conv2d as one fused (implicit-GEMM) node -- no im2col tensor is materialised,
-    so it is not subject to the per-buffer size limit that conv_tiled works around.
-    Identical result; it wins once the output map is large enough for the saved
-    im2col traffic to pay for itself, and loses on small maps. See ``det._conv``."""
-    pw = p if pw is None else pw
-    y = mt.conv2d_direct(w, x, sw, sh, pw, p, d, d)
-    return _cadd(y, b, w.shape[0]) if b is not None else y
+    """Same as ``conv``; both go through the router. Kept for call-site clarity."""
+    return conv2d_router(x, w, b, sh, sw, p, d, pw, n_tiles)
 
 
 def conv_dw(x, w, b, sh=1, sw=1, p=1, d=1, pw=None):

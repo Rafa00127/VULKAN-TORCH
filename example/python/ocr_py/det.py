@@ -14,24 +14,9 @@ SCALE_LIST = [1, 2, 4, 8]
 _RATIOS = [("long", 7, 3), ("mid", 5, 2), ("short", 3, 1)]
 
 
-# The neck's 9x9 projections dominate det's convolution time -- input_feature_projection.0
-# alone is 118 GFLOP, 60% of all the 9x9 work. Above this output size the fused no-im2col
-# kernel beats the tiled im2col path; below it the tiled path wins, because a small map
-# cannot amortise the fused kernel's tile. The crossover measured on RX 7900 XTX lies
-# between 48x232 (tiled faster) and 96x464 (fused faster). Same result either way.
-_FUSED_MIN_SPATIAL = 40000
-
-
 def _conv(x, w, name, p, pw=None):
     b = w[name + ".bias"] if (name + ".bias") in w else None
-    wt = w[name + ".weight"]
-    pw = p if pw is None else pw
-    if p >= 4:                       # the 9x9 projections: the only big-kernel convs here
-        oh = x.shape[1] + 2 * p - (wt.shape[2] - 1)
-        ow = x.shape[2] + 2 * pw - (wt.shape[3] - 1)
-        if oh * ow >= _FUSED_MIN_SPATIAL:
-            return N.conv_direct(x, wt, b, p=p, pw=pw)
-    return N.conv_tiled(x, wt, b, p=p, pw=pw)
+    return N.conv_tiled(x, w[name + ".weight"], b, p=p, pw=pw)
 
 
 def _intraclass(x, w, p):

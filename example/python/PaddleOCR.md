@@ -48,7 +48,7 @@ three run the same weights, so it's not ground-truth accuracy.
 |---|---|---|---|---|---|---|
 | A | rec | **1.2 s** | — | 1.0 s | 16.2 s | **99.95 / 100 %** |
 | A | det+rec | **3.1 s** | — | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
-| B | det+rec | **0.15 s** | **0.10 s** | 0.10 s | 0.8 s | **100 / 100 %** |
+| B | det+rec | **0.14 s** | **0.10 s** | 0.10 s | 0.8 s | **100 / 100 %** |
 
 vulkan-torch builds a compute graph on every new input size, which costs a little extra
 versus eager PyTorch. In fixed-shape recognition — video subtitles, galgame dialogue, anything
