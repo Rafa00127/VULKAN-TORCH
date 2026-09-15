@@ -128,8 +128,15 @@ The complete wiring is [Cli.cs](IndexTts.Net/Cli.cs) — a readable end-to-end e
 ### Accuracy
 
 Weights are f16, matmuls go through fp16 cores. Per-stage relative error (vs official PyTorch):
-codec 2.3e-2, s2mel 5–8e-3, BigVGAN 3.8e-2, Wav2Vec2-BERT 2.0e-2. Cold start ~5.5 s (weight load 2 s +
-reference audio 0.4 s + AR 0.5 s + diffusion/vocoder 2 s) to synthesize 3.5 s of audio.
+codec 2.3e-2, s2mel 5–8e-3, BigVGAN 3.8e-2, Wav2Vec2-BERT 2.0e-2.
+
+Speed (7900 XTX, `--seed 42`, best of 5 with the first run discarded): **RTF 0.314** — 5.78 s of
+inference for 18.40 s of audio, plus a 3.5 s weight load on a cold start. The quantized GGUF
+(`indextts2.5.q8.gguf`) runs at **RTF 0.298** with the weight load down to 2.8 s, at the cost of
+mel_logits relative error 3.3e-2 → 4.8e-2 (argmax agreement 24/24 → 21/24).
+
+The bench sentence is 85 Chinese characters (the same one the root README's head-to-head uses):
+「大家好，这是一段用来测试语音合成速度的文字，长度大概九十个汉字。我们想比较两个模型在同一台机器、同一句话下各自的推理耗时和实时率，所以句子要足够长，长到能体现出差异，同时也要读起来自然。」
 
 ---
 

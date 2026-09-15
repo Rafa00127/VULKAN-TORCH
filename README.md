@@ -146,6 +146,13 @@ g.exit()
 - `Memory` 要在 `enter()` **之前**建好；算子跑在**权重的后端**上（权重在显存，算子就在 GPU）。
 - 算子都是 `vt.` 下的函数：`matmul` `linear` `conv1d` `rms_norm` `layer_norm` `gelu` `silu` `soft_max` `rope` `flash_attn` `snake_1d` `im2col_rafa` …
 - 输入用 `g.input(shape, bytes)`（F32）/ `g.input_i32(shape, bytes)`。
+- **`shape()` 会吃掉最慢维的 1**（至少留一维）：
+
+  | PT 形状 | `shape()` |
+  |---|---|
+  | `(2, 1, 4)` | `(2, 1, 4)` |
+  | `(1, 4)` | `(4,)` |
+  | `(1, 2, 4)` | `(2, 4)` |
 
 从 GGUF 读权重：
 
@@ -268,6 +275,25 @@ static byte[] ToBytes(float[] f)
 ```
 
 要点与 Python 一致：`Enter()`/`Exit()` 是捕获作用域，`ToFloats`/`ToBytes`/`ToInts` 触发计算；要读的张量 `MarkOutput()`；`Memory` 在 `Enter()` 之前建好；算子在 `Ops` 静态类里。
+
+#### 权重怎么摆（`Linear` 的约定）
+
+上面 `twl` 建的是 `(Lout, Cout)`，也就是 **`(out, in)`** —— 不是随手写的，是必须的：
+
+| | 写法 | 权重形状（前者为行） |
+|---|---|---|
+| 数学课 | `X @ W + b` | `W (in, out)` —— 输入维在前 |
+| PyTorch `nn.Linear` | `x @ W.T + b` | `W (out, in)` —— 输出维在前 |
+| 本库 | `Linear(x, w)` = `ggml_mul_mat(w, x)` = `x @ w.T` | `w (out, in)` —— 同 PyTorch |
+
+**三者记法不同，但内存布局是一致的**：torch 的行优先和 ggml 的内维最快正好互逆，而 ggml 要的
+收缩维 `in` 落在 `ne0` 也正好是这个朝向 —— 所以按 torch 的样子原样读进去就是对的，不用转置。
+
+- 权重按 `(out, in)` 存，用 `Ops.Linear(x, w)`
+- **w 为权重时，别写 `Ops.Matmul(x, w)`**：它得先 `cont(transpose(w))` 去凑 ggml 的约定 ——
+  f16 白搬带宽，量化权重会爆炸。`Matmul` 留给激活 × 激活
+- 上游若是 HF `Conv1D`（名字骗人：它就是个线性层、没有卷积核，只是权重存 `(in, out)`），
+  在 converter 里转一次再写入
 
 ### 3. 复用同一张图
 
@@ -432,15 +458,19 @@ IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
 
 ## 两个 TTS 移植的横向对比
 
-同一台机（RX 7900 XTX / Vulkan）、同一句 89 字中文，各跑一次（RTF 不含权重加载）：
+同一台机（RX 7900 XTX / Vulkan）、同一句中文（85 个汉字）、同一个参考音频、`--seed 42`，
+各跑 5 次取最好（丢掉第一次）。RTF 不含权重加载：
 
 | 模型 | 音频 | 推理耗时 | RTF |
 |---|---|---|---|
-| HiggsTTS v3（~4B，`higgs-v3-tts.gguf`，9.34 GB） | 23.72 s | 6.87 s | **0.29** |
-| IndexTTS 2.5（~0.8B，`indextts2.5.f16.gguf`，3.3 GB） | 19.04 s | 6.90 s | **0.362** |
+| HiggsTTS v3（~4B，`higgs-v3-tts.gguf`，9.34 GB） | 23.76 s | 6.86 s | **0.288** |
+| IndexTTS 2.5（~0.8B，`indextts2.5.f16.gguf`，3.3 GB） | 18.40 s | 5.78 s | **0.314** |
+| IndexTTS 2.5（量化版，`indextts2.5.q8.gguf`，2.0 GB） | 17.76 s | 5.29 s | **0.298** |
 
-两者单句绝对耗时接近（~6.7–6.9 s）；Higgs 这次生成的音频更长（23.72 vs 17.89 s），所以 RTF 更低。
-Higgs 的 `Decode` 几乎免费（43 ms，耗时全在 36 层 backbone AR），IndexTTS 则是 AR / s2mel / BigVGAN 三家平分。
+IndexTTS 现在单句绝对耗时**反超** Higgs（5.78 vs 6.86 s）。Higgs 生成的音频更长（23.76 vs 18.40 s），
+所以它的 RTF 更低 —— RTF 受"一句话生出多长音频"影响很大，别只看它。
+Higgs 的 `Decode` 几乎免费（41 ms，耗时全在 36 层 backbone AR），IndexTTS 则是 AR / s2mel / BigVGAN 三家平分。
+测试句和完整命令见 [IndexTTS2.5.md](example/CSharp/IndexTTS2.5.md)。
 
 ## 许可
 

@@ -144,6 +144,13 @@ Key points:
 - `Memory` must be created **before** `enter()`; ops run on the **backend of the weights** (weights on GPU → ops on GPU).
 - Ops are functions under `vt.`: `matmul` `linear` `conv1d` `rms_norm` `layer_norm` `gelu` `silu` `soft_max` `rope` `flash_attn` `snake_1d` `im2col_rafa` …
 - Inputs via `g.input(shape, bytes)` (F32) / `g.input_i32(shape, bytes)`.
+- **`shape()` eats the slowest dim's 1s** (at least one dim always remains):
+
+  | PT shape | `shape()` |
+  |---|---|
+  | `(2, 1, 4)` | `(2, 1, 4)` |
+  | `(1, 4)` | `(4,)` |
+  | `(1, 2, 4)` | `(2, 4)` |
 
 Reading weights from GGUF:
 
@@ -266,6 +273,26 @@ static byte[] ToBytes(float[] f)
 ```
 
 Same key points as Python: `Enter()`/`Exit()` is the capture scope, `ToFloats`/`ToBytes`/`ToInts` trigger compute; `MarkOutput()` anything you read; `Memory` created before `Enter()`; ops live in the `Ops` static class.
+
+#### Which Way the Weights Go (`Linear`'s convention)
+
+`twl` above is created as `(Lout, Cout)`, i.e. **`(out, in)`** — not a style choice, it is required:
+
+| | Form | Weight shape (first entry is the row) |
+|---|---|---|
+| Textbook | `X @ W + b` | `W (in, out)` — input dim first |
+| PyTorch `nn.Linear` | `x @ W.T + b` | `W (out, in)` — output dim first |
+| This library | `Linear(x, w)` = `ggml_mul_mat(w, x)` = `x @ w.T` | `w (out, in)` — same as PyTorch |
+
+**Different notation, identical memory layout**: torch's row-major and ggml's fastest-dim-first are
+exact inverses, and ggml wants the contraction dim `in` at `ne0` — which is exactly where an
+`(out, in)` weight already lands when read in as-is. No transpose or shuffle needed.
+
+- Store weights as `(out, in)` and call `Ops.Linear(x, w)`
+- **With a weight as `w`, don't write `Ops.Matmul(x, w)`** — it has to `cont(transpose(w))` to satisfy
+  ggml's rule: wasted bandwidth on f16, a hard crash on quantized weights. `Matmul` is for activation × activation
+- If upstream is an HF `Conv1D` (misleading name: it is a plain linear layer with no kernel, it just
+  stores `(in, out)`), transpose it once in the converter
 
 ### 3. Reuse the Same Graph
 
@@ -429,15 +456,21 @@ Usage and the precision/speed findings are in [example/python/PaddleOCR.md](exam
 
 ## Head-to-Head: the Two TTS Ports
 
-Same machine (RX 7900 XTX / Vulkan), same 89-char Chinese sentence, one run each (RTF excludes weight load):
+Same machine (RX 7900 XTX / Vulkan), same 85-character Chinese sentence, same reference audio,
+`--seed 42`, best of 5 with the first run discarded (RTF excludes the weight load):
 
 | Model | Audio | Inference | RTF |
 |---|---|---|---|
-| HiggsTTS v3 (~4B, `higgs-v3-tts.gguf`, 9.34 GB) | 23.72 s | 6.87 s | **0.29** |
-| IndexTTS 2.5 (~0.8B, `indextts2.5.f16.gguf`, 3.3 GB) | 19.04 s | 6.90 s | **0.362** |
+| HiggsTTS v3 (~4B, `higgs-v3-tts.gguf`, 9.34 GB) | 23.76 s | 6.86 s | **0.288** |
+| IndexTTS 2.5 (~0.8B, `indextts2.5.f16.gguf`, 3.3 GB) | 18.40 s | 5.78 s | **0.314** |
+| IndexTTS 2.5 (quantized, `indextts2.5.q8.gguf`, 2.0 GB) | 17.76 s | 5.29 s | **0.298** |
 
-Absolute single-sentence time is close for both (~6.7–6.9 s); Higgs's audio came out longer (23.72 vs 17.89 s), so its RTF is lower.
-Higgs's `Decode` is basically free (43 ms — all the time is in the 36-layer backbone AR), while IndexTTS splits it three ways: AR / s2mel / BigVGAN.
+IndexTTS now beats Higgs on raw single-sentence time (5.78 vs 6.86 s). Higgs's audio came out
+longer (23.76 vs 18.40 s), which is what keeps its RTF lower — RTF is sensitive to how much audio
+a sentence produces, so don't read it on its own.
+Higgs's `Decode` is basically free (41 ms — all the time is in the 36-layer backbone AR), while
+IndexTTS splits it three ways: AR / s2mel / BigVGAN. The bench sentence and the exact commands
+are in [IndexTTS2.5.en.md](example/CSharp/IndexTTS2.5.en.md).
 
 ## License
 
