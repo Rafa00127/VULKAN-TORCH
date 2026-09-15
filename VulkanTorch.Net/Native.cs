@@ -8,6 +8,10 @@ internal static class Native
 {
     private const string Dll = "vulkantorch.dll";
 
+    /// <summary>Message from the most recent failed call on this thread; "" if none.
+    /// Read it immediately after a call returns a failure sentinel.</summary>
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_last_error();
+
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_runtime_new();
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_runtime_free(IntPtr rt);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_runtime_name(IntPtr rt);
@@ -33,11 +37,11 @@ internal static class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_exit(IntPtr g);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_input(IntPtr g, long[] shape, int ndim, IntPtr data, UIntPtr bytes, out IntPtr tensor);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_input_i32(IntPtr g, long[] shape, int ndim, IntPtr data, UIntPtr bytes, out IntPtr tensor);
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_to_bytes(IntPtr g, IntPtr tensor, IntPtr outBytes, UIntPtr bytes);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_to_bytes(IntPtr g, IntPtr tensor, IntPtr outBytes, UIntPtr bytes);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_n_nodes(IntPtr g);
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_compute(IntPtr g);
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_alloc_static(IntPtr g);
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_graph_compute_static(IntPtr g);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_compute(IntPtr g);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_alloc_static(IntPtr g);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_compute_static(IntPtr g);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_graph_set_input(IntPtr g, IntPtr tensor, IntPtr data, UIntPtr bytes);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_tensor_dim(IntPtr t);
@@ -48,7 +52,7 @@ internal static class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_tensor_type(IntPtr t);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern UIntPtr vt_tensor_nbytes(IntPtr t);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_tensor_data_ptr(IntPtr t);
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void vt_tensor_to_bytes(IntPtr t, IntPtr outBytes, UIntPtr bytes);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int vt_tensor_to_bytes(IntPtr t, IntPtr outBytes, UIntPtr bytes);
 
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_matmul(IntPtr a, IntPtr b);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr vt_mul_mat(IntPtr a, IntPtr b);

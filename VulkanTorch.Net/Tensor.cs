@@ -8,7 +8,13 @@ public sealed class Tensor
 {
     public IntPtr Handle { get; }
 
-    public Tensor(IntPtr handle) => Handle = handle;
+    /// <summary>
+    /// Rejects a null handle, which is how every op in <see cref="Ops"/> reports a
+    /// failure (they all end in <c>new(Native.vt_xxx(...))</c>). This one check is
+    /// what turns a native failure into a catchable exception instead of a process
+    /// that dies with no output.
+    /// </summary>
+    public Tensor(IntPtr handle) => Handle = VtError.Ptr(handle, "op");
 
     /// <summary>PyTorch-order shape.</summary>
     public long[] Shape
@@ -50,7 +56,7 @@ public sealed class Tensor
         long n = bytes > 0 ? bytes : NBytes;
         var buf = new byte[n];
         var pin = GCHandle.Alloc(buf, GCHandleType.Pinned);
-        try { Native.vt_tensor_to_bytes(Handle, pin.AddrOfPinnedObject(), (UIntPtr)n); }
+        try { VtError.Ok(Native.vt_tensor_to_bytes(Handle, pin.AddrOfPinnedObject(), (UIntPtr)n), "Tensor.ReadBytes"); }
         finally { pin.Free(); }
         return buf;
     }
@@ -91,7 +97,7 @@ public static class TensorExtensions
         var pin = GCHandle.Alloc(buf, GCHandleType.Pinned);
         try
         {
-            Native.vt_graph_to_bytes(g.Handle, t.Handle, pin.AddrOfPinnedObject(), (UIntPtr)buf.Length);
+            VtError.Ok(Native.vt_graph_to_bytes(g.Handle, t.Handle, pin.AddrOfPinnedObject(), (UIntPtr)buf.Length), "Tensor.ToBytes");
         }
         finally { pin.Free(); }
         return buf;

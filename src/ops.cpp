@@ -19,6 +19,12 @@ Tensor matmul(const Tensor& a, const Tensor& b) {
     // rank 1. Check the actual ggml shape instead: a matrix is ne[2] == ne[3] == 1.
     if (!ggml_is_matrix(a.raw()) || !ggml_is_matrix(b.raw()))
         throw std::runtime_error("matmul: expected 2D tensors");
+    // The other precondition of ggml_mul_mat(b^T, a) is b^T->ne[0] == a->ne[0], i.e.
+    // b->ne[1] == a->ne[0]. ggml_is_matrix cannot catch a violation of it: a PT [K]
+    // vector and a PT [1, K] row are the same ggml shape. Unchecked, a bad shape
+    // reaches GGML_ASSERT(ggml_can_mul_mat) and aborts the process instead of raising.
+    if (b.raw()->ne[1] != a.raw()->ne[0])
+        throw std::runtime_error("matmul: inner dimension mismatch (PT [M,K] @ PT [K,N])");
     Graph& g = cur();
     ggml_context* ctx = g.ctx();
     // C = A @ B. With the ne-reversed layout: b^T is K-contiguous, and

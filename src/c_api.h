@@ -21,6 +21,14 @@
 extern "C" {
 #endif
 
+// ---- errors ----
+//
+// C++ exceptions must not cross this ABI, so fallible entry points catch them,
+// stash the message here, and return a sentinel (NULL handle / non-zero int).
+// Read the message back after a failed call; it is thread-local and valid until
+// the next vt_* call on this thread. "" when the last call succeeded.
+VT_API const char* vt_last_error(void);
+
 // ---- runtime / device ----
 VT_API void* vt_runtime_new(void);
 VT_API void  vt_runtime_free(void* rt);
@@ -53,12 +61,12 @@ VT_API int   vt_graph_input(void* g, const int64_t* shape, int ndim, const void*
                             size_t bytes, void** out_tensor);
 VT_API int   vt_graph_input_i32(void* g, const int64_t* shape, int ndim, const void* data,
                                 size_t bytes, void** out_tensor);
-VT_API void  vt_graph_to_bytes(void* g, void* tensor, void* out, size_t bytes);
+VT_API int   vt_graph_to_bytes(void* g, void* tensor, void* out, size_t bytes);
 // Graph-cache support: replay one captured graph with fresh inputs.
 VT_API int   vt_graph_n_nodes(void* g);            // captured-graph size (introspection)
-VT_API void  vt_graph_compute(void* g);
-VT_API void  vt_graph_alloc_static(void* g);
-VT_API void  vt_graph_compute_static(void* g);
+VT_API int   vt_graph_compute(void* g);
+VT_API int   vt_graph_alloc_static(void* g);
+VT_API int   vt_graph_compute_static(void* g);
 VT_API int   vt_graph_set_input(void* g, void* tensor, const void* data, size_t bytes);
 
 // ---- tensor metadata ----
@@ -70,7 +78,7 @@ VT_API const char* vt_tensor_backend_name(void* t);
 VT_API int     vt_tensor_type(void* t);            // ggml_type
 VT_API void*   vt_tensor_data_ptr(void* t);        // device buffer address (introspection)
 VT_API size_t  vt_tensor_nbytes(void* t);
-VT_API void    vt_tensor_to_bytes(void* t, void* out, size_t bytes);  // raw device readback
+VT_API int     vt_tensor_to_bytes(void* t, void* out, size_t bytes);  // raw device readback
 
 // ---- ops (PyTorch semantics; every op appends to the current Graph) ----
 VT_API void* vt_matmul(void* a, void* b);
