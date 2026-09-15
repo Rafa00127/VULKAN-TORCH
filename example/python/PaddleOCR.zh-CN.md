@@ -47,12 +47,14 @@ text = ocr.read_line(rgb, det=True)       # 一块区域      -> det+rec -> 文�
 | 输入 | 模式 | vulkan-torch（新输入尺寸） | vulkan-torch（缓存命中） | PyTorch (ROCm) | CPU | match vk/pt |
 |---|---|---|---|---|---|---|
 | A | rec | **1.2 s** | — | 1.0 s | 16.2 s | **99.95 / 100 %** |
-| A | det+rec | **3.1 s** | — | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
-| B | det+rec | **0.14 s** | **0.10 s** | 0.10 s | 0.8 s | **100 / 100 %** |
+| A | det+rec | **2.8 s** | — | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
+| B | det+rec | **0.12 s** | **0.084 s** | 0.10 s | 0.8 s | **100 / 100 %** |
+
+A 是一页**已切好行**的图（125 行，逐行跑 rec 和 det+rec）；B 是聊天截图，整图 det+rec。
 
 vulkan-torch 每换一个输入尺寸就要建一次计算图，比 eager 的 PyTorch 多付一点这个开销。
 固定形状的识别——视频字幕、galgame 台词、任何裁剪尺寸会重复的场景——**没有差距**
-（B：0.10 s vs torch 0.10 s）。
+（B：0.084 s vs torch 0.10 s）。
 
 **任何情况下都比 CPU 流水线快 7–14×**。换来的是 vulkan-torch 能在任何 Vulkan 卡上跑，
 **不需要 ROCm 或 CUDA**。
@@ -119,4 +121,7 @@ python example\python\ocr_py\screen_translator.py
 - **默认只做 rec** —— `det=True` 在一块区域上跑完整 det+rec，返回换行拼接的文本。
 - **默认 F32** —— 更准，而且 f16 并不会更快。
 - **CTC 在 GPU 上解码**
-- **det 与 PaddleOCR 对齐。** 
+- **det 与 PaddleOCR 对齐。**
+- **卷积走矩阵核心了**（2026-09）：融合卷积路径在 det 的 9×9 核上快 ~2.1×。重测用
+  `tools/bench_ocr.py` —— 上面的数需要**权重先加载好**、**分行在计时之外**、
+  而且 A/B 必须**交错**跑，这三件事脚本都做了。 

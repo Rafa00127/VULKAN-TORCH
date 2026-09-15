@@ -47,12 +47,15 @@ three run the same weights, so it's not ground-truth accuracy.
 | input | mode | vulkan-torch (new input size) | vulkan-torch (cached) | PyTorch (ROCm) | CPU | match vk/pt |
 |---|---|---|---|---|---|---|
 | A | rec | **1.2 s** | — | 1.0 s | 16.2 s | **99.95 / 100 %** |
-| A | det+rec | **3.1 s** | — | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
-| B | det+rec | **0.14 s** | **0.10 s** | 0.10 s | 0.8 s | **100 / 100 %** |
+| A | det+rec | **2.8 s** | — | 2.3 s | 38.6 s | **98.9 / 99.0 %** |
+| B | det+rec | **0.12 s** | **0.084 s** | 0.10 s | 0.8 s | **100 / 100 %** |
+
+A is a page whose lines are pre-cut (125 lines, rec and det+rec per line); B is a screenshot
+run as a whole-image det+rec.
 
 vulkan-torch builds a compute graph on every new input size, which costs a little extra
 versus eager PyTorch. In fixed-shape recognition — video subtitles, galgame dialogue, anything
-where the crop size repeats — there is **no gap** (B: 0.10 s vs torch 0.10 s).
+where the crop size repeats — there is **no gap** (B: 0.084 s vs torch 0.10 s).
 
 **7–14× faster than the CPU pipeline** in every case. The trade is that vulkan-torch runs on
 any Vulkan GPU with **no ROCm or CUDA**.
@@ -123,3 +126,6 @@ Settings (hotkey, LLM endpoint, UI language, …) live in `data/ocr/screen_trans
 - **Default F32 — keep it.** More accurate, and f16 is not faster.
 - **CTC is decoded on the GPU.**
 - **det matches PaddleOCR.**
+- **Convolutions run on matrix cores** (2026-09): the fused conv path is ~2.1× faster on
+  det's 9×9 kernels. Re-measure with `tools/bench_ocr.py` (the timings above need weights
+  pre-loaded and lines pre-cut, and A/B has to be interleaved — the script does all three).

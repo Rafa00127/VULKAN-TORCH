@@ -25,6 +25,12 @@ public:
     const std::string& name() const { return name_; }
     bool defined() const { return backend_ != nullptr; }
 
+    // Where the backend runs its fused 2D conv (GGML_OP_CONV_2D) on matrix cores.
+    // That is what decides whether the fused conv beats the im2col one, so callers
+    // route on it. Backend-generic: an unknown backend (or a CPU device) answers
+    // false, and the fused path must then be treated as the scalar-FMA fallback.
+    bool conv_coopmat() const;
+
 private:
     ggml_backend_t backend_ = nullptr;
     std::string name_;

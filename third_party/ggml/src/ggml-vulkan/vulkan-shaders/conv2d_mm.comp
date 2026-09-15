@@ -7,6 +7,13 @@
 #extension GL_KHR_memory_scope_semantics : enable
 #endif
 
+#ifdef COOPMAT
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : enable
+#endif
+
 #ifdef USE_COLLECTIVES
 #    extension GL_KHR_shader_subgroup_shuffle : enable
 #endif
@@ -78,6 +85,21 @@ layout(constant_id = 12) const uint d1             = 1;
 layout(constant_id = 13) const uint KW             = 1;
 layout(constant_id = 14) const uint KH             = 1;
 
+#ifdef COOPMAT
+// cm1 subgroup tile: each subgroup computes a WM x WN region as a grid of
+// TM x TN x TK fragments. Requires WM%TM == WN%TN == BS_K%WM == BS_NPQ%WN ==
+// BS_CRS%TK == 0, and WG_SIZE == (BS_K/WM) * (BS_NPQ/WN) * subgroup_size.
+layout(constant_id = 15) const uint WM = 32;
+layout(constant_id = 16) const uint WN = 32;
+const uint TM = 16;
+const uint TN = 16;
+const uint TK = 16;
+const uint cms_per_row = WM / TM;
+const uint cms_per_col = WN / TN;
+const uint warps_M     = BS_K / WM;
+const uint warps_N     = BS_NPQ / WN;
+#endif
+
 uint32_t       tid     = gl_LocalInvocationID.x;
 const uint32_t WG_SIZE = gl_WorkGroupSize.x;
 
@@ -94,7 +116,7 @@ uint32_t n_elems_out = K * NPQ;
 // Number of blocktiles per input
 uint32_t NB_CRS = splitWork(CRS, BS_CRS);
 
-#ifdef COOPMAT2
+#if defined(COOPMAT2) || defined(COOPMAT)
 #define SHMEM_TYPE float16_t
 #else
 #define SHMEM_TYPE float
@@ -111,6 +133,16 @@ const uint32_t Bsh_len = BS_CRS * Bsh_stride;
 
 shared SHMEM_TYPE Ash[Ash_len];  // K x CRS
 shared SHMEM_TYPE Bsh[Bsh_len];  // CRS x NPQ
+
+#ifdef COOPMAT
+// The accumulator is fp32 (see main()), and a cooperative matrix can only be
+// written back through memory, so stage it here in fp32. Staging also decouples
+// the fragment layout from dst's: NPQ is contiguous only within an OH row, so a
+// fragment can straddle a row break and cannot be stored straight to global.
+const uint32_t Csh_stride = BS_NPQ;
+const uint32_t Csh_len    = BS_K * Csh_stride;
+shared float Csh[Csh_len];  // K x NPQ
+#endif
 
 // Threadtile sizes
 const uint32_t TS_NPQ = BS_K * BS_NPQ / WG_SIZE / TS_K;
@@ -176,6 +208,17 @@ void main() {
 #ifdef COOPMAT2
     coopmat<ACC_TYPE, gl_ScopeWorkgroup, BS_K, BS_NPQ, gl_MatrixUseAccumulator> matC;
     matC = coopmat<ACC_TYPE, gl_ScopeWorkgroup, BS_K, BS_NPQ, gl_MatrixUseAccumulator>(0.0);
+#elif defined(COOPMAT)
+    // fp32 accumulator on purpose: CRS = Cin*KH*KW is in the thousands here, so
+    // an fp16 accumulator would round once per 16-element K step all the way
+    // down the accumulation (~CRS/16 roundings) and lose far more than the
+    // fp16 *input* rounding we already accept.
+    coopmat<float, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator> sums[cms_per_row * cms_per_col];
+    [[unroll]] for (uint i = 0; i < cms_per_row * cms_per_col; i++) {
+        sums[i] = coopmat<float, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator>(0.0);
+    }
+    const uint warp_r = gl_SubgroupID / warps_N;
+    const uint warp_c = gl_SubgroupID % warps_N;
 #else
     float regC[TS_K][TS_NPQ];
     for (uint32_t T_ly = 0; T_ly < TS_K; T_ly++) {
@@ -303,6 +346,23 @@ void main() {
         coopMatLoad(matA, Ash, 0, Ash_stride, gl_CooperativeMatrixLayoutRowMajor);
         coopMatLoad(matB, Bsh, 0, Bsh_stride, gl_CooperativeMatrixLayoutRowMajor);
         matC = coopMatMulAdd(matA, matB, matC);
+#elif defined(COOPMAT)
+        // each subgroup multiplies its grid of fragments per TK-sized CRS chunk
+        [[unroll]] for (uint k_step = 0; k_step < BS_CRS / TK; k_step++) {
+            coopmat<float16_t, gl_ScopeSubgroup, TM, TK, gl_MatrixUseA> cache_a[cms_per_row];
+            [[unroll]] for (uint cm_row = 0; cm_row < cms_per_row; cm_row++) {
+                const uint a_off = (warp_r * WM + cm_row * TM) * Ash_stride + k_step * TK;
+                coopMatLoad(cache_a[cm_row], Ash, a_off, Ash_stride, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            [[unroll]] for (uint cm_col = 0; cm_col < cms_per_col; cm_col++) {
+                coopmat<float16_t, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> cache_b;
+                const uint b_off = k_step * TK * Bsh_stride + warp_c * WN + cm_col * TN;
+                coopMatLoad(cache_b, Bsh, b_off, Bsh_stride, gl_CooperativeMatrixLayoutRowMajor);
+                [[unroll]] for (uint cm_row = 0; cm_row < cms_per_row; cm_row++) {
+                    sums[cm_col * cms_per_row + cm_row] = coopMatMulAdd(cache_a[cm_row], cache_b, sums[cm_col * cms_per_row + cm_row]);
+                }
+            }
+        }
 #else
         if (T_y * TS_K < K) {
             UNROLL for (uint32_t CRS_lidx = 0; CRS_lidx < BS_CRS; CRS_lidx++) {
@@ -327,6 +387,34 @@ void main() {
     /* Save C* */
 #ifdef COOPMAT2
     coopMatPerElementNV(matC, matC, perElemOpStore);
+#elif defined(COOPMAT)
+    // cm1: each subgroup drops its fragment grid into its Csh slot, then the
+    // whole workgroup writes Csh out NPQ-contiguously
+    [[unroll]] for (uint cm_row = 0; cm_row < cms_per_row; cm_row++) {
+        [[unroll]] for (uint cm_col = 0; cm_col < cms_per_col; cm_col++) {
+            const uint csh_off = (warp_r * WM + cm_row * TM) * Csh_stride + warp_c * WN + cm_col * TN;
+            coopMatStore(sums[cm_col * cms_per_row + cm_row], Csh, csh_off, Csh_stride, gl_CooperativeMatrixLayoutRowMajor);
+        }
+    }
+    barrier();
+    {
+        const uint32_t store_rows_per_iter = WG_SIZE / BS_NPQ;
+        const uint32_t store_iters         = BS_K / store_rows_per_iter;
+        const uint32_t k_thread_offset     = tid / BS_NPQ;
+        const uint32_t npq_thread          = tid % BS_NPQ;
+        [[unroll]] for (uint32_t i = 0; i < store_iters; i++) {
+            uint32_t k_local = i * store_rows_per_iter + k_thread_offset;
+            uint32_t K_idx   = B_idx_K * BS_K + k_local;
+            uint32_t NPQ_idx = B_idx_NPQ * BS_NPQ + npq_thread;
+            uint32_t N_idx   = fastdiv(NPQ_idx, p.OWOHmp, p.OWOHL); // divide by p.OH * p.OW;
+            uint32_t OH_idx  = fastdiv(NPQ_idx - N_idx * p.OH * p.OW, p.OWmp, p.OWL); // divide by p.OW;
+            uint32_t OW_idx  = NPQ_idx - N_idx * p.OH * p.OW - OH_idx * p.OW;
+            uint32_t dst_idx = OW_idx + OH_idx * p.nb1 + K_idx * p.nb2 + N_idx * p.nb3;
+            if (K_idx < K && NPQ_idx < NPQ) {
+                dst_data[dst_idx] = D_TYPE(Csh[k_local * Csh_stride + npq_thread]);
+            }
+        }
+    }
 #else
     if (T_y * TS_K < K) {
         for (uint32_t T_ly = 0; T_ly < TS_K; T_ly++) {

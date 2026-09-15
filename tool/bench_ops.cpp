@@ -25,6 +25,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #ifndef BENCH_VARIANT
@@ -83,6 +84,10 @@ struct bench_case {
     virtual std::string   vars() const { return ""; }
     virtual uint64_t      flops(ggml_tensor * out) const { (void) out; return 0; }
     virtual bool          composite() const { return false; }
+
+    // Optional independent numeric cross-check of this op (--verify). Empty means
+    // this case has no reference to compare against. Return a one-line report.
+    virtual std::string   verify(ggml_backend_t backend) { (void) backend; return std::string(); }
 
     // Default: fill every tensor uniformly. Index-driven ops override this.
     virtual void initialize(ggml_context * ctx) {
@@ -223,6 +228,99 @@ struct case_conv_transpose_2d : bench_case {
         ggml_tensor * out = ggml_conv_transpose_2d_p0(ctx, a, b, (int) stride);
         ggml_set_name(out, "out");
         return out;
+    }
+
+    // No composite alternative exists for this op (unlike conv2d, whose im2col path
+    // is a second implementation), so the reference is a double-precision CPU
+    // scatter, mirroring ggml-cpu's:
+    //     dst[oc, ih*s + kh, iw*s + kw] += sum_ic w[kw,kh,oc,ic] * x[iw,ih,ic]
+    // (p0 = 0, so the output is the full (I-1)*s + K). Spatial is shrunk for the CPU
+    // pass; IC/OC/K -- hence the reduction and the backend tile -- are untouched.
+    std::string verify(ggml_backend_t backend) override {
+        const int64_t vw = IW > 96 ? 68 : IW, vh = IH > 32 ? 20 : IH;
+        const int64_t OW = (vw - 1) * stride + KW, OH = (vh - 1) * stride + KH;
+        const int64_t vn = OW * OH * OC * N;
+
+        const size_t na = (size_t) (KW * KH * OC * IC);
+        const size_t nb = (size_t) (vw * vh * IC * N);
+        std::vector<float> ha(na), hb(nb);
+        for (auto & x : ha) x = frand();
+        for (auto & x : hb) x = frand();
+
+        ggml_init_params params = {
+            /* .mem_size   = */ ggml_tensor_overhead() * 512 + ggml_graph_overhead_custom(1024, false),
+            /* .mem_base   = */ nullptr,
+            /* .no_alloc   = */ true,
+        };
+        ggml_context * ctx = ggml_init(params);
+        if (!ctx) return "FAIL: ggml_init";
+
+        ggml_tensor * a = nt(ctx, GGML_TYPE_F32, "a", KW, KH, OC, IC);
+        ggml_tensor * b = nt(ctx, GGML_TYPE_F32, "b", vw, vh, IC, N);
+        ggml_tensor * out = ggml_conv_transpose_2d_p0(ctx, a, b, (int) stride);
+        ggml_set_name(out, "out");
+
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
+        if (!buf) { ggml_free(ctx); return "FAIL: alloc_ctx_tensors"; }
+        ggml_backend_tensor_set(a, ha.data(), 0, na * sizeof(float));
+        ggml_backend_tensor_set(b, hb.data(), 0, nb * sizeof(float));
+
+        ggml_cgraph * gf = ggml_new_graph_custom(ctx, 1024, false);
+        ggml_build_forward_expand(gf, out);
+        ggml_status st = ggml_backend_graph_compute(backend, gf);
+        if (st != GGML_STATUS_SUCCESS) {
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+            return std::string("FAIL: graph_compute (") + ggml_status_to_string(st) + ")";
+        }
+        if (ggml_nelements(out) != vn) {
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+            char m[160];
+            snprintf(m, sizeof(m), "FAIL: nelements %lld, expected %lld", (long long) ggml_nelements(out), (long long) vn);
+            return m;
+        }
+        std::vector<float> vo((size_t) vn);
+        ggml_backend_tensor_get(out, vo.data(), 0, (size_t) vn * sizeof(float));
+        ggml_backend_buffer_free(buf);
+        ggml_free(ctx);
+
+        // ne=[OW,OH,OC,N] / a ne=[KW,KH,OC,IC] / b ne=[IW,IH,IC,N]
+        std::vector<double> vc((size_t) vn, 0.0);
+        for (int64_t oc = 0; oc < OC; ++oc) {
+            for (int64_t ih = 0; ih < vh; ++ih) {
+                for (int64_t iw = 0; iw < vw; ++iw) {
+                    for (int64_t kh = 0; kh < KH; ++kh) {
+                        for (int64_t kw = 0; kw < KW; ++kw) {
+                            const int64_t oh = ih * stride + kh, ow = iw * stride + kw;
+                            double acc = 0.0;
+                            for (int64_t ic = 0; ic < IC; ++ic) {
+                                acc += (double) ha[(size_t) (kw + kh * KW + oc * KW * KH + ic * KW * KH * OC)]
+                                     * (double) hb[(size_t) (iw + ih * vw + ic * vw * vh)];
+                            }
+                            vc[(size_t) (ow + oh * OW + oc * OW * OH)] += acc;
+                        }
+                    }
+                }
+            }
+        }
+
+        size_t n_bad = 0;
+        double max_abs = 0.0, mean = 0.0, scale = 0.0;
+        for (int64_t i = 0; i < vn; ++i) {
+            const double x = vo[(size_t) i];
+            if (!std::isfinite(x)) ++n_bad;
+            scale = std::max(scale, std::fabs(vc[(size_t) i]));
+            const double d = std::fabs(x - vc[(size_t) i]);
+            max_abs = std::max(max_abs, d);
+            mean += d;
+        }
+        char m[240];
+        snprintf(m, sizeof(m),
+                 "vs double cpu: max=%.3e rel=%.3e mean=%.3e  nonfinite=%zu/%lld  stride=%lld [spatial %lldx%lld]",
+                 max_abs, scale > 0 ? max_abs / scale : 0.0, mean / (double) vn, n_bad, (long long) vn,
+                 (long long) stride, (long long) vw, (long long) vh);
+        return std::string(n_bad ? "FAIL: non-finite  " : "ok   ") + m;
     }
 };
 
@@ -489,6 +587,164 @@ struct case_conv2d : bench_case {
     }
 };
 
+// Single-node 2D conv: one GGML_OP_CONV_2D node lowered by the implicit-GEMM conv
+// shader (conv2d_mm.comp), NOT the im2col->mul_mat composite above. This is the
+// path the det router picks for big non-3x3 kernels, so it is the one the coopmat
+// work targets.
+struct case_conv2d_direct : bench_case {
+    // b (data) [IW, IH, IC, N=1], a (kernel) [KW, KH, IC, OC] -> out [OW, OH, OC, 1]
+    int64_t IW, IH, IC, OC, KW, KH, s;
+    case_conv2d_direct(int64_t IW, int64_t IH, int64_t IC, int64_t OC, int64_t KW, int64_t KH, int64_t s)
+        : IW(IW), IH(IH), IC(IC), OC(OC), KW(KW), KH(KH), s(s) {}
+    const char * op() const override { return "conv2d_direct"; }
+    std::string vars() const override {
+        char b[160];
+        snprintf(b, sizeof(b), "IC=%lld OC=%lld H=%lld W=%lld K=%lldx%lld s=%lld",
+                 (long long) IC, (long long) OC, (long long) IH, (long long) IW, (long long) KW, (long long) KH, (long long) s);
+        return b;
+    }
+    uint64_t flops(ggml_tensor * out) const override {
+        (void) out;
+        const int64_t OH = (IH + 2 * (KH / 2) - KH) / s + 1;
+        const int64_t OW = (IW + 2 * (KW / 2) - KW) / s + 1;
+        return (uint64_t) 2 * OW * OH * OC * (IC * KH * KW);
+    }
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a = nt(ctx, GGML_TYPE_F32, "a", KW, KH, IC, OC);
+        ggml_tensor * b = nt(ctx, GGML_TYPE_F32, "b", IW, IH, IC, 1);
+        ggml_tensor * out = ggml_conv_2d_direct(ctx, a, b, (int) s, (int) s, (int) (KW / 2), (int) (KH / 2), 1, 1);
+        ggml_set_name(out, "out");
+        return out;
+    }
+
+    // The fused node and the im2col->mul_mat composite both emit ne=[OW,OH,OC,N],
+    // so they are directly comparable. They share the kernel/input tensors, which
+    // makes the inputs bit-identical. mul_mat is a different shader entirely, so
+    // it is an independent implementation, not a copy of what we are checking.
+    // Three-way check at a small spatial extent (so a double-precision CPU
+    // reference stays cheap) while IC/OC/K -- and hence CRS, the accumulation
+    // depth the fp32-accumulator decision is about -- stay at the shape under
+    // test. The CPU number is the only absolute one: it says whether the fused
+    // kernel is fp32-accurate, whereas the im2col GPU path is itself a suspect
+    // (its own im2col/GEMM may quantize), so "agrees with it" alone proves little.
+    std::string verify(ggml_backend_t backend) override {
+        const int p0 = (int) (KW / 2), p1 = (int) (KH / 2);
+        const int64_t vw = KW + 6, vh = KH + 2;
+        const int64_t OW = (vw + 2 * p0 - KW) / s + 1;
+        const int64_t OH = (vh + 2 * p1 - KH) / s + 1;
+
+        const size_t na = (size_t) (KW * KH * IC * OC);
+        const size_t nb = (size_t) (vw * vh * IC);
+        std::vector<float> ha(na), hb(nb);
+        for (auto & x : ha) x = frand();
+        for (auto & x : hb) x = frand();
+
+        ggml_init_params params = {
+            /* .mem_size   = */ ggml_tensor_overhead() * 512 + ggml_graph_overhead_custom(1024, false),
+            /* .mem_base   = */ nullptr,
+            /* .no_alloc   = */ true,
+        };
+        ggml_context * ctx = ggml_init(params);
+        if (!ctx) return "FAIL: ggml_init";
+
+        ggml_tensor * a = nt(ctx, GGML_TYPE_F32, "a", KW, KH, IC, OC);
+        ggml_tensor * b = nt(ctx, GGML_TYPE_F32, "b", vw, vh, IC, 1);
+        ggml_tensor * fused = ggml_conv_2d_direct(ctx, a, b, (int) s, (int) s, p0, p1, 1, 1);
+        ggml_tensor * ref   = ggml_conv_2d(ctx, a, b, (int) s, (int) s, p0, p1, 1, 1);
+        ggml_set_name(fused, "fused");
+        ggml_set_name(ref, "ref");
+
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend);
+        if (!buf) { ggml_free(ctx); return "FAIL: alloc_ctx_tensors"; }
+        ggml_backend_tensor_set(a, ha.data(), 0, na * sizeof(float));
+        ggml_backend_tensor_set(b, hb.data(), 0, nb * sizeof(float));
+
+        ggml_cgraph * gf = ggml_new_graph_custom(ctx, 1024, false);
+        ggml_build_forward_expand(gf, fused);
+        ggml_build_forward_expand(gf, ref);
+
+        ggml_status st = ggml_backend_graph_compute(backend, gf);
+        if (st != GGML_STATUS_SUCCESS) {
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+            return std::string("FAIL: graph_compute (") + ggml_status_to_string(st) + ")";
+        }
+
+        const int64_t nf = ggml_nelements(fused), nr = ggml_nelements(ref);
+        if (nf != nr || nf != OW * OH * OC) {
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+            char m[160];
+            snprintf(m, sizeof(m), "FAIL: nelements fused=%lld ref=%lld expected=%lld",
+                     (long long) nf, (long long) nr, (long long) (OW * OH * OC));
+            return m;
+        }
+        std::vector<float> vf((size_t) nf), vr((size_t) nf);
+        ggml_backend_tensor_get(fused, vf.data(), 0, (size_t) nf * sizeof(float));
+        ggml_backend_tensor_get(ref,   vr.data(), 0, (size_t) nf * sizeof(float));
+        ggml_backend_buffer_free(buf);
+        ggml_free(ctx);
+
+        // CPU reference in double. Accumulate with ic outermost to match the
+        // shader's CRS = ic*(KH*KW) + kh*KW + kw ordering.
+        std::vector<double> vc((size_t) nf, 0.0);
+        for (int64_t oc = 0; oc < OC; ++oc) {
+            for (int64_t oh = 0; oh < OH; ++oh) {
+                for (int64_t ow = 0; ow < OW; ++ow) {
+                    double acc = 0.0;
+                    for (int64_t ic = 0; ic < IC; ++ic) {
+                        for (int64_t kh = 0; kh < KH; ++kh) {
+                            const int64_t ih = oh * s - p1 + kh;
+                            if (ih < 0 || ih >= vh) continue;
+                            for (int64_t kw = 0; kw < KW; ++kw) {
+                                const int64_t iw = ow * s - p0 + kw;
+                                if (iw < 0 || iw >= vw) continue;
+                                acc += (double) ha[(size_t) (kw + kh * KW + ic * KW * KH + oc * KW * KH * IC)]
+                                     * (double) hb[(size_t) (iw + ih * vw + ic * vw * vh)];
+                            }
+                        }
+                    }
+                    vc[(size_t) (ow + oh * OW + oc * OW * OH)] = acc;
+                }
+            }
+        }
+
+        struct err_t { double max_abs, rel, mean_abs; size_t bad; };
+        auto err_vs = [&](const std::vector<float> & v) {
+            err_t e{0.0, 0.0, 0.0, 0};
+            double scale = 0.0;
+            for (int64_t i = 0; i < nf; ++i) {
+                const double x = v[(size_t) i];
+                if (!std::isfinite(x)) ++e.bad;
+                scale = std::max(scale, std::fabs(vc[(size_t) i]));
+            }
+            for (int64_t i = 0; i < nf; ++i) {
+                const double d = std::fabs(v[(size_t) i] - vc[(size_t) i]);
+                e.max_abs = std::max(e.max_abs, d);
+                e.mean_abs += d;
+            }
+            e.mean_abs /= (double) nf;
+            e.rel = scale > 0 ? e.max_abs / scale : 0.0;
+            return e;
+        };
+        const err_t ef = err_vs(vf), er = err_vs(vr);
+
+        double d_fr = 0.0;
+        for (int64_t i = 0; i < nf; ++i) {
+            d_fr = std::max(d_fr, std::fabs((double) vf[(size_t) i] - (double) vr[(size_t) i]));
+        }
+
+        char m[400];
+        snprintf(m, sizeof(m),
+                 "fused vs cpu: max=%.3e rel=%.3e | im2col vs cpu: max=%.3e rel=%.3e | fused vs im2col: max=%.3e"
+                 "  [OC=%lld CRS=%lld NPQ=%lld nonfinite=%zu/%zu]",
+                 ef.max_abs, ef.rel, er.max_abs, er.rel, d_fr,
+                 (long long) OC, (long long) (IC * KW * KH), (long long) (OW * OH),
+                 ef.bad, er.bad);
+        return std::string((ef.bad || er.bad) ? "FAIL: non-finite  " : "ok   ") + m;
+    }
+};
+
 struct case_conv2d_dw : bench_case {
     int64_t IW, IH, C, KW, KH, s;
     case_conv2d_dw(int64_t IW, int64_t IH, int64_t C, int64_t KW, int64_t KH, int64_t s)
@@ -637,6 +893,57 @@ static std::vector<case_ptr> make_cases() {
 
     // --- conv (composite) ---
     add(new case_conv2d(64, 64, 1, 512, 3, 3, 2));      // Conformer embed-ish
+    // --- conv2d_direct (single implicit-GEMM node) vs the im2col composite ---
+    // Paired (OC, K, spatial) sweep: OC picks the backend tile (K>64 -> 128x128,
+    // K<=32 -> 32x256, else 64x32), which is what decides whether the coopmat cm1
+    // path applies at all, so it is the axis that matters for routing. OC=100 is
+    // not a multiple of the 64-row K tile, so it also covers the partial-K store.
+    // Read with `tools/bench_ops_compare.py --pair`.
+    //
+    // The im2col reference needs OH*OW*IC*KH*KW*4 bytes resident, so 9x9 only
+    // pairs up to ~48x232; at det's real 464x96 the 9x9 reference is 3.7 GB and
+    // cannot be allocated at all (which is the reason the fused path exists).
+    // det's target shape, paired only where the reference fits:
+    add(new case_conv2d_direct(464, 96, 256, 64, 3, 3, 1));
+    add(new case_conv2d(464, 96, 256, 64, 3, 3, 1));
+    for (int64_t oc : { (int64_t) 32, (int64_t) 64, (int64_t) 100, (int64_t) 128, (int64_t) 256 }) {
+        add(new case_conv2d_direct(232, 48, 256, oc, 9, 9, 1));
+        add(new case_conv2d(232, 48, 256, oc, 9, 9, 1));
+        add(new case_conv2d_direct(464, 96, 256, oc, 3, 3, 1));
+        add(new case_conv2d(464, 96, 256, oc, 3, 3, 1));
+    }
+    // spatial dependence at the two tile regimes that matter (64x32 vs 128x128)
+    for (int64_t oc : { (int64_t) 64, (int64_t) 128 }) {
+        for (int64_t hw : { (int64_t) 116, (int64_t) 232 }) {
+            add(new case_conv2d_direct(hw, 24, 256, oc, 3, 3, 1));
+            add(new case_conv2d(hw, 24, 256, oc, 3, 3, 1));
+        }
+    }
+    // rec's regime: 3x3 on a short, wide map (W picked so the unchunked im2col
+    // reference still fits -- one conv2d_tiled chunk). Maps the (IC, OC) crossover
+    // where the fused path stops paying.
+    for (int64_t oc : { (int64_t) 128, (int64_t) 256, (int64_t) 512, (int64_t) 768 }) {
+        add(new case_conv2d_direct(800, 48, 512, oc, 3, 3, 1));
+        add(new case_conv2d(800, 48, 512, oc, 3, 3, 1));
+    }
+    for (int64_t ic : { (int64_t) 256, (int64_t) 512 }) {
+        for (int64_t oc : { (int64_t) 64, (int64_t) 512 }) {
+            add(new case_conv2d_direct(800, 48, ic, oc, 3, 3, 1));
+            add(new case_conv2d(800, 48, ic, oc, 3, 3, 1));
+        }
+    }
+    // 1x1 (pointwise) at the backbone's channel counts: both det and rec carry
+    // 512-896 channel pointwise convs, and K=1 makes CRS=IC, i.e. the im2col
+    // reference is at its cheapest here.
+    for (auto s : { std::make_tuple((int64_t) 928, (int64_t) 192, (int64_t) 512, (int64_t) 896),
+                    std::make_tuple((int64_t) 464, (int64_t) 96, (int64_t) 896, (int64_t) 896),
+                    std::make_tuple((int64_t) 800, (int64_t) 48, (int64_t) 768, (int64_t) 768),
+                    std::make_tuple((int64_t) 800, (int64_t) 48, (int64_t) 512, (int64_t) 768) }) {
+        const int64_t w = std::get<0>(s), h = std::get<1>(s), ic = std::get<2>(s), oc = std::get<3>(s);
+        add(new case_conv2d_direct(w, h, ic, oc, 1, 1, 1));
+        add(new case_conv2d(w, h, ic, oc, 1, 1, 1));
+    }
+
     add(new case_conv2d(64, 64, 128, 128, 3, 3, 1));    // OCR LCNet-ish
     add(new case_conv2d(64, 64, 256, 256, 7, 7, 1));    // det neck strip conv (big kernel)
     add(new case_conv2d(64, 64, 256, 256, 1, 1, 1));    // LCNetV4 pointwise (K=1)
@@ -655,6 +962,13 @@ static std::vector<case_ptr> make_cases() {
 
     // --- conv_transpose_2d (OCR DB head) / col2im_1d (DacDecoder) ---
     add(new case_conv_transpose_2d(64, 64, 32, 32, 3, 3, 2));
+    // det's DB head `head.conv_up` (PT weight [64, 64, 2, 2]): the one transposed conv
+    // in the ported models on a tile cm1 covers (OC=64 -> 64x32). `head.conv_final` is
+    // [64, 1, 2, 2] -> OC=1 -> 32x256 tile, which cm1 cannot use.
+    add(new case_conv_transpose_2d(64, 64, 96, 464, 2, 2, 2));
+    // det's DB head `head.conv_final` (PT weight [64, 1, 2, 2]): OC=1 -> 32x256 tile,
+    // so this one does NOT get cm1.
+    add(new case_conv_transpose_2d(64, 1, 192, 928, 2, 2, 2));
     add(new case_col2im_1d(16, 32, 128, 8));            // K=16, OC=32, T_in=128, s=8
 
     // --- pooling / sampling / pad ---
@@ -805,15 +1119,18 @@ static bool run_case(ggml_backend_t backend, bench_case * c, result_t & r) {
 }
 
 static void usage(const char * argv0) {
-    printf("usage: %s [--filter SUBSTR] [--list]\n", argv0);
+    printf("usage: %s [--filter SUBSTR] [--list] [--verify]\n", argv0);
+    printf("  --verify  run each case's numeric cross-check instead of timing it\n");
 }
 
 int main(int argc, char ** argv) {
     const char * filter = nullptr;
     bool list = false;
+    bool check = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--filter") == 0 && i + 1 < argc) filter = argv[++i];
         else if (strcmp(argv[i], "--list") == 0) list = true;
+        else if (strcmp(argv[i], "--verify") == 0) check = true;
         else { usage(argv[0]); return 1; }
     }
 
@@ -842,6 +1159,18 @@ int main(int argc, char ** argv) {
 
     printf("# variant=%s\n", BENCH_VARIANT);
     printf("# device=%s | %s\n", ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+
+    if (check) {
+        for (auto & c : cases) {
+            if (filter && c->op() != std::string(filter) && std::string(c->op()).find(filter) == std::string::npos) continue;
+            const std::string r = c->verify(backend);
+            printf("%-22s %-52s %s\n", c->op(), c->vars().c_str(),
+                   r.empty() ? "(no cross-check defined)" : r.c_str());
+        }
+        ggml_backend_free(backend);
+        return 0;
+    }
+
     printf("# %-20s %-52s %12s %11s %10s\n", "op", "vars", "avg_us", "GFLOP/s", "GB/s");
 
     for (auto & c : cases) {

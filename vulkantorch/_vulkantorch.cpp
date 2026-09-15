@@ -14,8 +14,30 @@ using namespace vt;
 PYBIND11_MODULE(_vulkantorch, m) {
     m.doc() = "vulkantorch: a minimal PyTorch-style tensor library on ggml-vulkan";
 
+    // Device capability, probed once through a throwaway backend. Lives outside
+    // Runtime so a caller can ask before it owns a device (the conv router does).
+    // The ggml Vulkan device itself is cached, so this does not re-init the GPU.
+    m.def("conv_coopmat_available", [] {
+        static const bool available = [] {
+            ggml_backend_load_all();
+            ggml_backend_dev_t dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+            if (dev == nullptr) return false;
+            ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+            if (backend == nullptr) return false;
+            const bool ok = Device(backend, "probe").conv_coopmat();
+            ggml_backend_free(backend);
+            return ok;
+        }();
+        return available;
+    }, "True when the GPU backend runs the fused conv2d (conv2d_direct) on matrix "
+       "cores. Only then does routing a convolution to it beat conv2d/conv2d_tiled; "
+       "a device-specific fact, not a routing policy.");
+
     py::class_<Device>(m, "Device")
         .def("name", [](const Device& d) { return d.name(); })
+        .def("conv_coopmat", &Device::conv_coopmat,
+             "True when the backend runs the fused conv2d on matrix cores. Only on such "
+             "a device does routing a convolution to conv2d_direct beat conv2d/conv2d_tiled.")
         .def("__repr__", [](const Device& d) { return "Device(" + d.name() + ")"; });
 
     py::class_<Runtime>(m, "Runtime")

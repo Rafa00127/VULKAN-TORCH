@@ -4883,9 +4883,69 @@ static void ggml_vk_load_shaders(vk_device& device) {
                 conv2d_BS.CRS);  // CRS block size should be capped at subgroup size for correctness when shuffle is used.
         }
 
-        uint32_t conv2d_shmem_req =
-            (conv2d_BS.K * (conv2d_BS.CRS + conv2d_SHMEM_PAD) + conv2d_BS.CRS * (conv2d_BS.NPQ + conv2d_SHMEM_PAD)) * sizeof(float);
-        if (device->properties.limits.maxComputeSharedMemorySize < conv2d_shmem_req) {
+        // cm1: KHR subgroup cooperative matrix. Off unless the driver reports a
+        // 16x16x16 fp16-in/fp32-acc fragment (the shape the shader hard-codes)
+        // and we can force the subgroup width its warp mapping assumes. 128x128
+        // is out: the fp32 staging buffer alone would be BS_K*BS_NPQ*4 = 64 KiB.
+        bool conv2d_use_cm1 = false;
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+        conv2d_use_cm1 = !device->coopmat2 &&
+                         device->coopmat_support &&
+                         device->coopmat_support_16x16x16_f32acc &&
+                         device->subgroup_size_control &&
+                         (device->subgroup_size == 32 || device->subgroup_size == 64) &&
+                         s != CONV_SHAPE_128x128 &&
+                         getenv("VT_VK_NO_CONV_CM1") == nullptr;  // A/B switch
+#endif
+
+        const uint32_t conv2d_scalar_WG_SIZE   = conv2d_WG_SIZE;
+        const uint32_t conv2d_scalar_SHMEM_PAD = conv2d_SHMEM_PAD;
+        const uint32_t conv2d_cm1_SHMEM_PAD    = 8;
+        uint32_t conv2d_WM = 16;
+        uint32_t conv2d_WN = 16;  // cm1 subgroup tile; ignored by the other paths
+        uint32_t conv2d_required_subgroup_size = 0;
+
+        const uint32_t conv2d_shmem_limit = device->properties.limits.maxComputeSharedMemorySize;
+        // Ash/Bsh are fp16 on the cm1 path and fp32 otherwise; Csh is fp32 and cm1-only
+        auto conv2d_shmem_req = [&](uint32_t pad, uint32_t elem, bool csh_f32) {
+            const uint32_t csh_elems = csh_f32 ? conv2d_BS.K * conv2d_BS.NPQ : 0u;
+            return (uint32_t) ((conv2d_BS.K * (conv2d_BS.CRS + pad) + conv2d_BS.CRS * (conv2d_BS.NPQ + pad)) * elem
+                 + csh_elems * sizeof(float));
+        };
+
+        if (conv2d_use_cm1) {
+            conv2d_SHMEM_PAD = conv2d_cm1_SHMEM_PAD;
+            // 16x16x16 fragments; pick WM/WN to keep WG_SIZE at 256
+            // (i.e. 8 subgroups for sg=32, 4 for sg=64).
+            const bool sg64 = (device->subgroup_size == 64);
+            switch (s) {
+                case CONV_SHAPE_64x32:  conv2d_WM = sg64 ? 32 : 16; conv2d_WN = 16; break;
+                case CONV_SHAPE_32x256: conv2d_WM = sg64 ? 16 : 32; conv2d_WN = sg64 ? 128 : 32; break;
+                default: break;
+            }
+            const uint32_t warps_M = conv2d_BS.K / conv2d_WM;
+            const uint32_t warps_N = conv2d_BS.NPQ / conv2d_WN;
+            conv2d_WG_SIZE = warps_M * warps_N * device->subgroup_size;
+            conv2d_required_subgroup_size = device->subgroup_size;
+            if (conv2d_shmem_limit < conv2d_shmem_req(conv2d_SHMEM_PAD, sizeof(uint16_t), true)) {
+                conv2d_use_cm1 = false;
+                conv2d_WG_SIZE   = conv2d_scalar_WG_SIZE;
+                conv2d_SHMEM_PAD = conv2d_scalar_SHMEM_PAD;
+                conv2d_required_subgroup_size = 0;
+            }
+        }
+
+        if (getenv("VT_VK_CONV_LOG")) {
+            static const char * names[] = { "128x128", "64x32", "32x256" };
+            GGML_LOG_INFO("VTCONV tile=%-8s K=%u CRS=%u NPQ=%u cm1=%d WM=%u WN=%u WG=%u shmem=%u/%u pad=%u\n",
+                          s < CONV_SHAPE_COUNT ? names[s] : "?", conv2d_BS.K, conv2d_BS.CRS, conv2d_BS.NPQ,
+                          (int) conv2d_use_cm1, conv2d_WM, conv2d_WN, conv2d_WG_SIZE,
+                          conv2d_shmem_req(conv2d_SHMEM_PAD, conv2d_use_cm1 ? sizeof(uint16_t) : sizeof(float), conv2d_use_cm1),
+                          conv2d_shmem_limit, conv2d_SHMEM_PAD);
+        }
+
+        if (!conv2d_use_cm1 &&
+            conv2d_shmem_limit < conv2d_shmem_req(conv2d_SHMEM_PAD, sizeof(float), false)) {
             conv2d_BS.CRS = 8;
             if (use_collectives) {
                 conv2d_BS.CRS = std::min(device->subgroup_size, conv2d_BS.CRS);
@@ -4907,10 +4967,13 @@ static void ggml_vk_load_shaders(vk_device& device) {
             spec_constants_cpy.push_back(state.d1); \
             spec_constants_cpy.push_back(state.KW); \
             spec_constants_cpy.push_back(state.KH); \
+            spec_constants_cpy.push_back(conv2d_WM); \
+            spec_constants_cpy.push_back(conv2d_WN); \
             ggml_vk_create_pipeline( \
                 device, c.second, #name #type_suffix, \
                 name##type_suffix##spv_suffix##_len, name##type_suffix##spv_suffix##_data, "main", 3, \
-                sizeof(vk_op_conv2d_push_constants), wg_denoms, spec_constants_cpy, 1, true, use_collectives);    \
+                sizeof(vk_op_conv2d_push_constants), wg_denoms, spec_constants_cpy, 1, true, \
+                use_collectives || (conv2d_required_subgroup_size != 0), conv2d_required_subgroup_size);    \
         }
 #define CREATE_CONVS(spv_suffix) \
         CREATE_CONV(conv2d, _f32, spv_suffix) \
@@ -4920,6 +4983,11 @@ static void ggml_vk_load_shaders(vk_device& device) {
 #if defined(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
         if (device->coopmat2) {
             CREATE_CONVS(_cm2)
+        } else
+#endif
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+        if (conv2d_use_cm1) {
+            CREATE_CONVS(_cm1)
         } else
 #endif
         if (conv2d_UNROLL) {
@@ -15418,6 +15486,29 @@ int ggml_backend_vk_get_device_count() {
     return ggml_vk_get_device_count();
 }
 
+// Does the fused 2D conv (GGML_OP_CONV_2D, conv2d_mm.comp) run on matrix cores on
+// this backend? That decides whether routing a convolution to the fused path beats
+// the im2col one -- it does where coopmat is live and does not where the shader
+// falls back to scalar FMA. Reports a device capability only, no policy.
+int ggml_backend_vk_conv_coopmat_available(ggml_backend_t backend) {
+    if (backend == nullptr) {
+        return 0;
+    }
+    ggml_backend_vk_context * ctx = (ggml_backend_vk_context *) backend->context;
+    if (ctx == nullptr || ctx->device == nullptr) {
+        return 0;
+    }
+    const vk_device & device = ctx->device;
+    // coopmat2 is the NV workgroup-scoped path; the KHR subgroup path needs the
+    // 16x16x16 fp16-in/fp32-acc fragment the shader hard-codes, a forced subgroup
+    // width of 32 or 64, and the subgroup_size_control extension to force it.
+    return (device->coopmat2 ||
+            (device->coopmat_support &&
+             device->coopmat_support_16x16x16_f32acc &&
+             device->subgroup_size_control &&
+             (device->subgroup_size == 32 || device->subgroup_size == 64))) ? 1 : 0;
+}
+
 void ggml_backend_vk_get_device_description(int device, char * description, size_t description_size) {
     GGML_ASSERT(device < (int) vk_instance.device_indices.size());
     int dev_idx = vk_instance.device_indices[device];
@@ -16324,11 +16415,19 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
     return devices[device];
 }
 
+static void * ggml_backend_vk_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
+    GGML_UNUSED(reg);
+    if (strcmp(name, "ggml_backend_vk_conv_coopmat_available") == 0) {
+        return (void *) ggml_backend_vk_conv_coopmat_available;
+    }
+    return NULL;
+}
+
 static const struct ggml_backend_reg_i ggml_backend_vk_reg_i = {
     /* .get_name         = */ ggml_backend_vk_reg_get_name,
     /* .get_device_count = */ ggml_backend_vk_reg_get_device_count,
     /* .get_device       = */ ggml_backend_vk_reg_get_device,
-    /* .get_proc_address = */ NULL,
+    /* .get_proc_address = */ ggml_backend_vk_reg_get_proc_address,
 };
 
 ggml_backend_reg_t ggml_backend_vk_reg() {

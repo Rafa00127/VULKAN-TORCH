@@ -77,4 +77,22 @@ Runtime::~Runtime() {
     if (backend_ != nullptr) ggml_backend_free(backend_);
 }
 
+// Look the capability up through the backend registry rather than linking the
+// Vulkan backend directly: src/ is backend-agnostic (VT_BACKEND picks vulkan or
+// hip), so a missing or non-Vulkan backend must simply answer false.
+bool Device::conv_coopmat() const {
+    if (backend_ == nullptr) return false;
+
+    ggml_backend_dev_t dev = ggml_backend_get_device(backend_);
+    if (dev == nullptr) return false;
+    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+    if (reg == nullptr) return false;
+
+    // Backends that do not provide it (CPU, HIP, a stub reg) answer NULL.
+    typedef int (*fn_t)(ggml_backend_t);
+    fn_t fn = reinterpret_cast<fn_t>(
+        ggml_backend_reg_get_proc_address(reg, "ggml_backend_vk_conv_coopmat_available"));
+    return fn != nullptr && fn(backend_) != 0;
+}
+
 }  // namespace vt
