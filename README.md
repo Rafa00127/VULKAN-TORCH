@@ -113,7 +113,7 @@ third_party/ggml/             只剩下cpu和vk的ggml
 
 ```bat
 python example\python\higgstts_py\cli.py ^
-  --model path/to/HiggsTTS3.gguf ^
+  --model path/to/HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --ref-wav data/ref_audio/melinaref_24k.wav ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"
@@ -121,14 +121,15 @@ python example\python\higgstts_py\cli.py ^
 
 ```
 === Timing ===
-Prefill:           933 ms
-Backbone AR:      1261 ms
-Decode:             10 ms
-Total:            2204 ms
+Prefill:           943 ms
+Backbone AR:      1273 ms
+Decode:             12 ms
+Total:            2227 ms
 Audio:            5.72 sec
-RTF:             0.385 x
+RTF:             0.389 x
 ```
-(python这边librosa初始化浪费了0.8s)
+(python这边 librosa 初始化浪费了 0.8s —— **只在第一次调用里**：同一个进程里再调一次 enc 只要 41 ms，
+总时间落到 1300 ms / RTF 0.23，和 C# 那边基本一致。CLI 每次都是新进程，所以打印出来必然含这 0.8s。)
 
 | 参数 | 说明 |
 |---|---|
@@ -153,7 +154,7 @@ RTF:             0.385 x
 dotnet build example\CSharp\HiggsTts.Net -c Release
 
 example\CSharp\HiggsTts.Net\bin\Release\net10.0\HiggsTts.Net.exe synth ^
-  --model D:\models\HiggsTTS3.gguf ^
+  --model D:\models\HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"
 ```

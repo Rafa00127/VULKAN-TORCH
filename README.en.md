@@ -111,7 +111,7 @@ Covers installing/referencing both libraries, the minimal example, reusing one g
 
 ```bat
 python example\python\higgstts_py\cli.py ^
-  --model path/to/HiggsTTS3.gguf ^
+  --model path/to/HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --ref-wav data/ref_audio/melinaref_24k.wav ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"
@@ -119,14 +119,16 @@ python example\python\higgstts_py\cli.py ^
 
 ```
 === Timing ===
-Prefill:           933 ms
-Backbone AR:      1261 ms
-Decode:             10 ms
-Total:            2204 ms
+Prefill:           943 ms
+Backbone AR:      1273 ms
+Decode:             12 ms
+Total:            2227 ms
 Audio:            5.72 sec
-RTF:             0.385 x
+RTF:             0.389 x
 ```
-(on the Python side, librosa init wastes 0.8 s)
+(on the Python side, librosa init wastes 0.8 s — **only on the first call**: a second `enc` inside the same
+process takes 41 ms, bringing the total to ~1300 ms / RTF 0.23, about the same as the C# side. The CLI is a
+fresh process every run, so it always pays that 0.8 s.)
 
 | Arg | Description |
 |---|---|
@@ -151,7 +153,7 @@ RTF:             0.385 x
 dotnet build example\CSharp\HiggsTts.Net -c Release
 
 example\CSharp\HiggsTts.Net\bin\Release\net10.0\HiggsTts.Net.exe synth ^
-  --model D:\models\HiggsTTS3.gguf ^
+  --model D:\models\HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"
 ```
