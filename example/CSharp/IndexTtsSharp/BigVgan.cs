@@ -27,6 +27,13 @@ public sealed class BigVgan : IDisposable
     private readonly GgufWeights _w;
     private readonly Memory _mem;
     private readonly Dictionary<string, Tensor> _t = new();
+    // The up-sampling kernels in the layout `Ops.ConvTranspose1d` wants: PT [K*OC, IC].
+    // Built in FuseInner (load time, on the host) with the same permutation the Higgs
+    // converter bakes into its GGUF -- this GGUF keeps the raw layout, so it happens here
+    // instead (device tensors cannot be created while a graph capture is active).
+    // The plain [OC, IC, K] form is not kept for these: only the wperm one is used.
+    private readonly Dictionary<string, Tensor> _wp = new();
+    private readonly Dictionary<string, (int OC, int K)> _upDim = new();
     private readonly float[] _upFilt = new float[ActK];
     private Dictionary<string, Tensor>? _dbg;
     private readonly float[] _dnFilt = new float[ActK];
@@ -87,6 +94,8 @@ public sealed class BigVgan : IDisposable
         var gH = _w[P + name + ".weight_g"].ReadBytes();
         var vH = _w[P + name + ".weight_v"].ReadBytes();
         var W = new float[outC * inC * k];
+        // PT [K*OC, IC] for Ops.ConvTranspose1d; only the transposed convs need it.
+        var WP = transposed ? new float[k * outC * inC] : null;
         for (long a = 0; a < c0; a++)
         {
             double ss = 0;
@@ -104,18 +113,37 @@ public sealed class BigVgan : IDisposable
                     long o = transposed ? b : a, i = transposed ? a : b;
                     // A transposed conv replayed as a correlation needs the kernel time-reversed.
                     W[(o * inC + i) * k + (transposed ? k - 1 - kk : kk)] = val;
+                    // The wperm form wants the kernel in its natural order: the op is a
+                    // real transposed conv (mul_mat + col2im), not a correlation. Row order
+                    // is `o*K + kk`, matching the converter's [IC,OC,K] -> reshape(IC,K*OC).T.
+                    if (WP != null) WP[(o * k + kk) * inC + i] = val;
                 }
         }
         // Store F16: the source weights are F16 and the convs run on the f16 path anyway, so
         // this halves the fused footprint (448 MB -> 224 MB) with no numerical difference.
-        var bytes = new byte[W.Length * 2];
-        for (int i = 0; i < W.Length; i++)
+        // A transposed conv gets only the wperm tensor (Up reads it plus _upDim); keeping
+        // the other form too would cost another ~24 MB and nothing would read it.
+        if (transposed)
         {
-            var h = BitConverter.GetBytes((Half)W[i]);
+            _upDim[name] = (outC, k);
+            _wp[name] = _mem.Tensor(new long[] { k * outC, inC }, Ops.F16, ToF16(WP!));
+        }
+        else
+        {
+            _t[name] = _mem.Tensor(new long[] { outC, inC, k }, Ops.F16, ToF16(W));
+        }
+    }
+
+    private static byte[] ToF16(float[] src)
+    {
+        var bytes = new byte[src.Length * 2];
+        for (int i = 0; i < src.Length; i++)
+        {
+            var h = BitConverter.GetBytes((Half)src[i]);
             bytes[2 * i] = h[0];
             bytes[2 * i + 1] = h[1];
         }
-        _t[name] = _mem.Tensor(new long[] { outC, inC, k }, Ops.F16, bytes);
+        return bytes;
     }
 
     private void ReadFilter(string name, float[] dst, bool reverse)
@@ -154,17 +182,23 @@ public sealed class BigVgan : IDisposable
         return Ops.Clamp(x, -1f, 1f);
     }
 
-    /// <summary>Weight-normalised ConvTranspose1d as zero-stuffing + a plain conv with the
-    /// time-reversed kernel, then trimmed to the reference output length.</summary>
+    /// <summary>Weight-normalised ConvTranspose1d: the real thing (mul_mat + col2im via the
+    /// pre-permuted kernel), then trimmed to the reference output length. Zero-stuffing +
+    /// a stock conv costs `rate`x the FLOPs and materialises a `rate`x longer im2col.</summary>
     public Tensor Up(Graph g, Tensor x, string name, int rate)
     {
         int t = (int)x.Shape[0];
-        int k = (int)_t[name].Shape[2];
+        var (oc, k) = _upDim[name];
         int pad = (k - rate) / 2;
-        var z = ZeroStuff(g, x, rate);                       // [t*rate, Cin]
-        var full = Ops.Add(Ops.Conv1d(z, _t[name], 1, k - 1 - pad, 1), _w[P + name + ".bias"]);
-        int outLen = (t - 1) * rate - 2 * pad + k;
-        return RowSlice(g, full, 0, outLen);
+        int raw = (t - 1) * rate + k;                        // ConvTranspose1d_p0 length
+        // Same shape dance as Higgs' DacDecoder. The op returns time-contiguous ne=[raw, OC],
+        // i.e. PT [OC, raw], so: crop that axis (offset `pad`, `raw-2*pad` rows == torch's
+        // ConvTranspose1d(padding=pad)), then transpose+collapse to the PT [T, OC] the rest
+        // of the pipeline wants (every conv here is channel-contiguous).
+        var ct = Ops.ConvTranspose1d(x, _wp[name], rate, oc);
+        var view = Ops.View2d(ct, raw - 2 * pad, oc, (ulong)(raw * 4), (ulong)(pad * 4));
+        var y = Ops.Contiguous(Ops.Transpose(view));
+        return Ops.Add(y, _w[P + name + ".bias"]);
     }
 
     /// <summary>AMPBlock1: one fixed kernel size, dilations (1,3,5); each layer runs

@@ -46,6 +46,24 @@ def flatten(obj, prefix="", out=None):
     return out
 
 
+# HF's GPT-2 uses `Conv1D`, not `nn.Linear`, so its projection weights are PT [in, out] --
+# the *reverse* of the usual [out, in]. ggml's mul_mat needs the contraction dim at ne0, and
+# a plain read of an [in, out] weight puts ne0 on `out`, so the weight cannot be consumed
+# as-is: the C# port has to transpose it at run time (Ops.Matmul). That is pure wasted
+# bandwidth, and a block-quantized weight cannot be transposed at all.
+#
+# So store these pre-transposed (transpose once here, then a ggml tensor created with
+# ne0 = row count reads W_ggml[i,j] = W[i,j] directly), which lets the port call
+# Linear(x, W) instead and keeps the weight a plain mul_mat src0.
+_HF_CONV1D_SUFFIXES = ("attn.c_attn.weight", "attn.c_proj.weight",
+                       "mlp.c_fc.weight", "mlp.c_proj.weight")
+
+
+def is_hf_conv1d(name):
+    """GPT-2's Conv1D projections, stored [in, out] upstream (see the note above)."""
+    return name.startswith("gpt.gpt.h.") and name.endswith(_HF_CONV1D_SUFFIXES)
+
+
 def load_pth(path):
     import torch
     obj = torch.load(path, map_location="cpu", weights_only=False)
@@ -82,6 +100,7 @@ def main():
     ]
 
     all_tensors = {}
+    n_conv1d = 0
     for prefix, path, loader in sources:
         if not os.path.isfile(path):
             print(f"!! missing: {path}")
@@ -93,7 +112,11 @@ def main():
             if "optimizer" in name:
                 dropped += 1
                 continue
-            all_tensors[f"{prefix}.{name}"] = arr
+            key = f"{prefix}.{name}"
+            if is_hf_conv1d(key):
+                arr = np.ascontiguousarray(arr.T)
+                n_conv1d += 1
+            all_tensors[key] = arr
         if dropped:
             print(f"{prefix:9s}          (dropped {dropped} optimizer-state tensors)")
         n = sum(v.size for v in t.values())
@@ -118,6 +141,7 @@ def main():
 
     n_f32 = sum(1 for v in all_tensors.values() if v.ndim <= 1)
     n_f16 = len(all_tensors) - n_f32
+    print(f"      GPT-2 Conv1D weights pre-transposed to [out, in]: {n_conv1d}")
     nbytes = sum(v.nbytes for v in all_tensors.values())
     print(f"\nTOTAL {len(all_tensors)} tensors, {sum(v.size for v in all_tensors.values())/1e6:.0f}M params")
     print(f"      f16: {n_f16}   f32(1D/norm): {n_f32}")

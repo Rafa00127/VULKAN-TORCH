@@ -78,6 +78,20 @@ static bool is_prefused_conv(const std::string& n) {
     return false;
 }
 
+// The one predicate both target types use: only a genuine weight matrix may be rewritten.
+// A float tensor whose name does not end in `.weight` is a table the runtime reads as raw
+// bytes -- the emotion matrices (spk_matrix/emo_matrix, read as F32), the weight-norm
+// halves (.weight_g/.weight_v, folded as F16), the 1-D norms/biases -- and rewriting it
+// makes that read garbage. A converter-materialized conv kernel does end in `.weight`, so
+// it stays excluded by name (is_prefused_conv). The caller still gates on the tensor's
+// rank: ordinary conv kernels are 3-D and never reach the 2-D block-quantize path.
+static bool is_quantizable_weight(const std::string& n) {
+    static const char* suffix = ".weight";
+    const size_t len = strlen(suffix);
+    return n.size() >= len && n.compare(n.size() - len, len, suffix) == 0 &&
+           !is_prefused_conv(n) && n.find("norm") == std::string::npos;
+}
+
 // Smaller-block type to fall back to when ne[0] is not a multiple of the
 // target's block size (K-quants use 256; Q4_0/Q5_0/Q8_0 use 32).
 static ggml_type block_fallback(ggml_type t) {
@@ -162,15 +176,14 @@ static bool requantize(const std::string& in_path, const std::string& out_path,
         const bool src_float = (t->type == GGML_TYPE_F32 || t->type == GGML_TYPE_F16);
         // A plain weight matrix a converter wrote: not a norm, not a pre-fused
         // conv kernel (which the runtime reads as F32).
-        const bool is_special = sname.find("norm") != std::string::npos || is_prefused_conv(sname);
-
         if (to_f16) {
-            // Downcast weights (2-D or higher) to F16; leave 1-D norms/biases,
-            // scalars and pre-fused conv kernels in their original type.
-            if (t->type == GGML_TYPE_F32 && ggml_n_dims(t) >= 2 && !is_special) {
+            // Downcast plain weight matrices (2-D or higher) to F16. Same predicate as the
+            // block-quantize path: anything else keeps its original type, because the
+            // runtime reads it raw in that type.
+            if (t->type == GGML_TYPE_F32 && ggml_n_dims(t) >= 2 && is_quantizable_weight(sname)) {
                 dst = GGML_TYPE_F16;
             }
-        } else if (src_float && ggml_n_dims(t) == 2 && !is_special) {
+        } else if (src_float && ggml_n_dims(t) == 2 && is_quantizable_weight(sname)) {
             ggml_type qt = qtype;
             if (t->ne[0] % ggml_blck_size(qt) != 0) {
                 const ggml_type fb = block_fallback(qtype);

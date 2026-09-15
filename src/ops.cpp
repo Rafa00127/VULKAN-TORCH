@@ -25,6 +25,16 @@ Tensor matmul(const Tensor& a, const Tensor& b) {
     // reaches GGML_ASSERT(ggml_can_mul_mat) and aborts the process instead of raising.
     if (b.raw()->ne[1] != a.raw()->ne[0])
         throw std::runtime_error("matmul: inner dimension mismatch (PT [M,K] @ PT [K,N])");
+    // The transpose below is what makes this unusable with quantized data: a block-quantized
+    // tensor has no row-major layout to transpose. The Vulkan backend refuses the cont, the
+    // scheduler hands it to the CPU, and the CPU's strided dup segfaults -- so catch it here,
+    // where it can raise a message at the call site instead of killing the process.
+    if (ggml_is_quantized(b.raw()->type))
+        throw std::runtime_error("matmul: quantized second operand cannot be transposed; "
+                                 "store the weight as PT [out,in] and use linear()");
+    if (ggml_is_quantized(a.raw()->type))
+        throw std::runtime_error("matmul: quantized first operand (ggml_mul_mat takes a "
+                                 "quantized weight only as src0)");
     Graph& g = cur();
     ggml_context* ctx = g.ctx();
     // C = A @ B. With the ne-reversed layout: b^T is K-contiguous, and

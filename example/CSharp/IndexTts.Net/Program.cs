@@ -73,6 +73,10 @@ internal static class Program
         string root = FindRoot();
         string refs = Path.Combine(root, "data", "indextts_ref");
         string gguf = Path.Combine(root, "model", "indextts2.5", "indextts2.5.f16.gguf");
+        // `--model <path>` lets a validation mode check a different GGUF (a quantized one,
+        // say); without it the modes always read the reference f16 file.
+        for (int i = 1; i + 1 < args.Length; i++)
+            if (args[i] == "--model") gguf = args[i + 1];
 
         using var rt = new Runtime();
         var dev = rt.Gpu();
@@ -857,7 +861,7 @@ internal static class Program
         string p = "gpt.gpt.h.0.";
         var x = g.Input(new long[] { t, d }, emb.Data);
         var ln1 = Ops.Add(Ops.Mul(Ops.LayerNorm(x, 1e-5f), w[p + "ln_1.weight"]), w[p + "ln_1.bias"]);
-        var qkv = Ops.Add(Ops.Matmul(ln1, w[p + "attn.c_attn.weight"]), w[p + "attn.c_attn.bias"]);
+        var qkv = Ops.Add(Ops.Linear(ln1, w[p + "attn.c_attn.weight"]), w[p + "attn.c_attn.bias"]);
         var mask = Ops.Cast(g.Input(new long[] { t, t }, Gpt2.CausalMask(t)), Ops.F16);
         var attnRaw = Gpt2.AttnRaw(w, 0, ln1, mask, t);
         // same split the port uses, kept separate so the heads can be inspected
@@ -865,10 +869,10 @@ internal static class Program
         var qH = Gpt2.ToHeads(Ops.Contiguous(Ops.View2d(qkv, Gpt2.D, t, rowBytes, 0)), t, Gpt2.Heads);
         var kH = Gpt2.ToHeads(Ops.Contiguous(Ops.View2d(qkv, Gpt2.D, t, rowBytes, (ulong)(Gpt2.D * 4))), t, Gpt2.Heads);
         var vH = Gpt2.ToHeads(Ops.Contiguous(Ops.View2d(qkv, Gpt2.D, t, rowBytes, (ulong)(2 * Gpt2.D * 4))), t, Gpt2.Heads);
-        var attn = Ops.Add(Ops.Matmul(attnRaw, w[p + "attn.c_proj.weight"]), w[p + "attn.c_proj.bias"]);
+        var attn = Ops.Add(Ops.Linear(attnRaw, w[p + "attn.c_proj.weight"]), w[p + "attn.c_proj.bias"]);
         var m1 = Ops.Add(x, attn);
         var ln2 = Ops.Add(Ops.Mul(Ops.LayerNorm(m1, 1e-5f), w[p + "ln_2.weight"]), w[p + "ln_2.bias"]);
-        var fc = Ops.Add(Ops.Matmul(ln2, w[p + "mlp.c_fc.weight"]), w[p + "mlp.c_fc.bias"]);
+        var fc = Ops.Add(Ops.Linear(ln2, w[p + "mlp.c_fc.weight"]), w[p + "mlp.c_fc.bias"]);
         var act = Ops.Gelu(fc);
         var mlp = Gpt2.Mlp(w, 0, ln2);
 

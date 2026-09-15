@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 using namespace vt;
@@ -105,6 +106,29 @@ static int run() {
             for (int c = 0; c < Cc; ++c) err = std::max(err, std::fabs(double(X[r * Cc + c]) - got[c * R + r]));
         const bool ok = err == 0.0;
         std::printf("[%s] transpose+contig     max_err=%.3g\n", ok ? " OK " : "FAIL", err);
+        if (!ok) ++fails;
+    }
+
+    // ── a quantized second operand must raise, not kill the process ─────────
+    // matmul() has to transpose b, and block-quantized data has no row-major layout to
+    // transpose; unchecked, the Vulkan backend refuses the cont, the scheduler pushes it
+    // to the CPU and the CPU's strided dup segfaults.
+    {
+        std::vector<float> A(4 * 64);
+        for (float& x : A) x = dist(rng);
+        Graph g(rt.backend(), rt.sched());
+        Graph::Scope scope(&g);
+        auto a = g.input({4, 64}, A.data(), A.size() * sizeof(float));
+        Tensor q8(new_tensor_pt(g.ctx(), GGML_TYPE_Q8_0, {64, 4}), &g);  // PT [K=64, N=4]
+        bool ok = false;
+        try {
+            matmul(a, q8);
+            std::printf("[FAIL] matmul with a quantized second operand  no exception\n");
+        } catch (const std::runtime_error& e) {
+            ok = std::string(e.what()).find("cannot be transposed") != std::string::npos;
+            std::printf("[%s] matmul with a quantized second operand  \"%s\"\n",
+                        ok ? " OK " : "FAIL", e.what());
+        }
         if (!ok) ++fails;
     }
 

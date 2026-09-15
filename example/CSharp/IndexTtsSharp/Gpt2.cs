@@ -36,7 +36,7 @@ public static class Gpt2
     public static Tensor AttnRaw(GgufWeights w, int li, Tensor h, Tensor mask, int t)
     {
         string p = $"gpt.gpt.h.{li}.";
-        var qkv = Ops.Add(Ops.Matmul(h, w[p + "attn.c_attn.weight"]), w[p + "attn.c_attn.bias"]);
+        var qkv = Ops.Add(Ops.Linear(h, w[p + "attn.c_attn.weight"]), w[p + "attn.c_attn.bias"]);
         ulong rowBytes = (ulong)(3 * D * 4);
         var q = ToHeads(Ops.Contiguous(Ops.View2d(qkv, D, t, rowBytes, 0)), t, Heads);
         var k = ToHeads(Ops.Contiguous(Ops.View2d(qkv, D, t, rowBytes, (ulong)(D * 4))), t, Heads);
@@ -50,15 +50,15 @@ public static class Gpt2
     {
         string p = $"gpt.gpt.h.{li}.";
         var attn = AttnRaw(w, li, h, mask, t);
-        return Ops.Add(Ops.Matmul(attn, w[p + "attn.c_proj.weight"]), w[p + "attn.c_proj.bias"]);
+        return Ops.Add(Ops.Linear(attn, w[p + "attn.c_proj.weight"]), w[p + "attn.c_proj.bias"]);
     }
 
     /// <summary>MLP block output (pre-residual), PT [t, D].</summary>
     public static Tensor Mlp(GgufWeights w, int li, Tensor h)
     {
         string p = $"gpt.gpt.h.{li}.";
-        var fc = Ops.Gelu(Ops.Add(Ops.Matmul(h, w[p + "mlp.c_fc.weight"]), w[p + "mlp.c_fc.bias"]));
-        return Ops.Add(Ops.Matmul(fc, w[p + "mlp.c_proj.weight"]), w[p + "mlp.c_proj.bias"]);
+        var fc = Ops.Gelu(Ops.Add(Ops.Linear(h, w[p + "mlp.c_fc.weight"]), w[p + "mlp.c_fc.bias"]));
+        return Ops.Add(Ops.Linear(fc, w[p + "mlp.c_proj.weight"]), w[p + "mlp.c_proj.bias"]);
     }
 
     public static Tensor Layer(GgufWeights w, int li, Tensor x, Tensor mask, int t)

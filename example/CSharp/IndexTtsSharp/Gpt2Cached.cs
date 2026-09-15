@@ -26,7 +26,7 @@ public static class Gpt2Cached
         var residual = x;
         var h = Ops.Add(Ops.Mul(Ops.LayerNorm(x, 1e-5f), w[p + "ln_1.weight"]), w[p + "ln_1.bias"]);
 
-        var qkv = Ops.Add(Ops.Matmul(h, w[p + "attn.c_attn.weight"]), w[p + "attn.c_attn.bias"]);
+        var qkv = Ops.Add(Ops.Linear(h, w[p + "attn.c_attn.weight"]), w[p + "attn.c_attn.bias"]);
         ulong rb = (ulong)(3 * D * 4);
         var q = Gpt2.ToHeads(Ops.Contiguous(Ops.View2d(qkv, D, t, rb, 0)), t, NH);
         var k = Gpt2.ToHeads(Ops.Contiguous(Ops.View2d(qkv, D, t, rb, (ulong)(D * 4))), t, NH);
@@ -39,12 +39,12 @@ public static class Gpt2Cached
 
         var attn = Ops.FlashAttn(q, kf, vf, mask, 1f / MathF.Sqrt(HD));
         var flat = Ops.Reshape(Ops.Contiguous(attn), new long[] { t, D });
-        x = Ops.Add(residual, Ops.Add(Ops.Matmul(flat, w[p + "attn.c_proj.weight"]), w[p + "attn.c_proj.bias"]));
+        x = Ops.Add(residual, Ops.Add(Ops.Linear(flat, w[p + "attn.c_proj.weight"]), w[p + "attn.c_proj.bias"]));
 
         residual = x;
         var h2 = Ops.Add(Ops.Mul(Ops.LayerNorm(x, 1e-5f), w[p + "ln_2.weight"]), w[p + "ln_2.bias"]);
-        var fc = Ops.Gelu(Ops.Add(Ops.Matmul(h2, w[p + "mlp.c_fc.weight"]), w[p + "mlp.c_fc.bias"]));
-        return Ops.Add(x, Ops.Add(Ops.Matmul(fc, w[p + "mlp.c_proj.weight"]), w[p + "mlp.c_proj.bias"]));
+        var fc = Ops.Gelu(Ops.Add(Ops.Linear(h2, w[p + "mlp.c_fc.weight"]), w[p + "mlp.c_fc.bias"]));
+        return Ops.Add(x, Ops.Add(Ops.Linear(fc, w[p + "mlp.c_proj.weight"]), w[p + "mlp.c_proj.bias"]));
     }
 
     /// <summary>emb PT [t, D] -> final_norm output, all layers reading/writing the cache.</summary>
