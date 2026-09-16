@@ -49,13 +49,15 @@ public static class DacDecoder
                 x = ResUnit(w, x, p + $"res_unit{r + 1}.", ResDil[r]);
         }
 
-        // output: snake -> conv2 (k7, Cout=1) -> tanh. The [1,32,7] weight loses its
-        // leading 1 under ggml, so do the single-output conv as im2col + mul_mat.
+        // output: snake -> conv2 (k7, Cout=1) -> waveform. No final tanh: the Higgs
+        // tokenizer deliberately drops DAC's ("DAC in HiggsAudioV2Tokenizer ... removes the
+        // final nn.Tanh activation function"), so these weights emit the waveform directly.
+        // The [1,32,7] weight loses its leading 1 under ggml, so do the single-output conv
+        // as im2col + mul_mat.
         x = Ops.Snake1d(x, w["codec.ac_dec.snake1.alpha"]);
         var im = Ops.Im2colRafa(x, 7, 1, 3, 1);
         var w2d = Ops.Reshape(w["codec.ac_dec.conv2.weight"], new long[] { 1, 32 * 7 });
         x = Ops.Add(Ops.MulMat(im, w2d), w["codec.ac_dec.conv2.bias"]);
-        x = Ops.Tanh(x);
 
         var outT = Ops.Contiguous(x).MarkOutput();
         var pcm = outT.ToFloats(g);

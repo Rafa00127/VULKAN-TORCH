@@ -38,7 +38,7 @@ internal static class Cli
         if (IsHelp(args)) { PrintHelp(); return 0; }
 
         string mode = "synth", refText = "", text = "";
-        string? model = null, refWav = null, outPath = null, tokenizer = null;
+        string? model = null, refWav = null, outPath = null, tokenizer = null, codesFile = null, f32Out = null;
         float temperature = 0.9f;
         int topk = 50, seed = 42, maxSteps = 0;   // 0 = predict from text length
         bool noCache = false;
@@ -49,6 +49,8 @@ internal static class Cli
             switch (args[i])
             {
                 case "--model": model = args[++i]; break;
+                case "--codes": codesFile = args[++i]; break;
+                case "--f32": f32Out = args[++i]; break;
                 case "--ref-wav": refWav = args[++i]; break;
                 case "--ref-text": refText = args[++i]; break;
                 case "--text": text = args[++i]; break;
@@ -79,6 +81,38 @@ internal static class Cli
         using var tts = new Tts(model, tokenizer);
         Console.WriteLine($"backend: {tts.BackendName}");
         Console.WriteLine($"load weights:        {sw.Elapsed.TotalMilliseconds,8:F1} ms  ({tts.TensorCount} tensors)");
+
+        // `decode` takes a codes file straight to PCM, with no encode_ref / AR in the way —
+        // the counterpart of `encode`, and the way to A/B this decoder against another port's
+        // on identical input (tools/check_higgs_ref.py --wav writes the Python side).
+        if (mode == "decode")
+        {
+            if (codesFile == null)
+            {
+                Console.Error.WriteLine("decode: --codes <file.i32> is required (flat int32 [T*8])");
+                return 2;
+            }
+            var raw = File.ReadAllBytes(codesFile);
+            var codesIn = new int[raw.Length / sizeof(int)];
+            Buffer.BlockCopy(raw, 0, codesIn, 0, raw.Length);
+            sw.Restart();
+            var dec = tts.Decode(codesIn);
+            Console.WriteLine($"Decode: {dec.Length} PCM samples "
+                              + $"({dec.Length / (double)Tts.SampleRate:F2} sec) "
+                              + $"({sw.Elapsed.TotalMilliseconds:F0} ms)");
+            if (f32Out != null)
+            {
+                // 16-bit wavs can't be compared byte-for-byte across ports (the writers
+                // round differently); this is the raw output for numeric A/B.
+                var fb = new byte[dec.Length * 4];
+                Buffer.BlockCopy(dec, 0, fb, 0, fb.Length);
+                File.WriteAllBytes(f32Out, fb);
+                Console.WriteLine($"wrote raw f32 PCM -> {f32Out}");
+            }
+            Program.SaveWav(outPath, dec);
+            Console.WriteLine($"\nSaved: {outPath}");
+            return 0;
+        }
 
         var wav = LoadWav(refWav, out int sr);
         sw.Restart();
@@ -149,13 +183,16 @@ internal static class Cli
 Usage:
   HiggsTts.Net.exe [synth] --model <gguf> [options]
   HiggsTts.Net.exe encode  --model <gguf> [--ref-wav <wav>] [--out <path>]
+  HiggsTts.Net.exe decode  --model <gguf> --codes <file.i32> [--out <path>]
 
 Modes:
   synth      (default) reference wav + text -> wav
   encode     reference wav -> RVQ codes (writes <out>.i32); stops after encode_ref
+  decode     RVQ codes -> wav; skips encode_ref and the AR entirely
 
 Options:
   --model <gguf>       HiggsTTS GGUF (required)
+  --codes <file>       `decode` input: flat int32, [T*8] row-major (what `encode` writes)
   --tokenizer <json>   override the BPE tokenizer with an HF tokenizer.json
                        (default: rebuilt from the GGUF's embedded vocab + merges)
   --ref-wav <wav>      reference audio (default: data/ref_audio/melinaref_24k.wav)

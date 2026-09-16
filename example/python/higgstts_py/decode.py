@@ -49,14 +49,16 @@ def dac_decode(rt, w, codes):
         for r in (1, 2, 3):
             x = _res_unit(g, w, x, p + f"res_unit{r}.", {1: 1, 2: 3, 3: 9}[r])
 
-    # output: snake -> conv2(k7, Cout=1) -> tanh.
+    # output: snake -> conv2(k7, Cout=1) -> waveform. No final tanh: the Higgs tokenizer
+    # deliberately drops DAC's ("DAC in HiggsAudioV2Tokenizer ... removes the final nn.Tanh
+    # activation function"), so these weights emit the waveform directly. Keeping upstream
+    # DAC's tanh made our PCM tanh(the official) — 3e-2 off, see tools/check_higgs_ref.py.
     # (a PT [1,32,7] weight collapses its leading 1 under ggml, so do the
     #  single-output conv directly as im2col + mul_mat.)
     x = mt.snake_1d(x, w["codec.ac_dec.snake1.alpha"])
     im = mt.im2col_rafa(x, 7, 1, 3, 1)                                  # ne=[224, T]
     w2d = mt.reshape(w["codec.ac_dec.conv2.weight"], [1, 32 * 7])       # PT [1,224] ne=[224,1]
     x = mt.add(mt.mul_mat(im, w2d), w["codec.ac_dec.conv2.bias"])       # ne=[T,1]
-    x = mt.tanh(x)
     c = mt.contiguous(x)
     c.mark_output()
     g.exit()
