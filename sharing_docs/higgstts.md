@@ -87,5 +87,5 @@ python tools\convert\convert-higgs-tts-to-gguf.py --input <HF safetensors 目录
 DAC 解码和 AR 的 logits **逐位一致**，tokenizer 输出也一致；`encode_ref` 用同一个重采样器时
 97% 的帧相同（差异只来自 Python 用 librosa、C# 用自带 Kaiser 重采样，听感无差别）。
 
-速度约 **0.2~0.3 RTF**：Decode 几乎免费（41 ms，耗时全在 36 层 backbone AR）。
+速度约 **0.2~0.3 RTF** （在我的7900 xtx上）：Decode 几乎免费（41 ms，耗时全在 36 层 backbone AR）。
 另外两个模型的简介见 [example-models.md](example-models.md)。

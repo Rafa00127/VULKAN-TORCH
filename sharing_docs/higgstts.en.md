@@ -90,5 +90,5 @@ DAC decode and the AR logits are **bit-identical**, and the tokenizer output mat
 the same resampler, `encode_ref` gives 97% identical frames (the only diff comes from Python
 using librosa vs C# using its own Kaiser resampler — inaudible).
 
-Speed is about **0.2–0.3 RTF**: `Decode` is basically free (41 ms — all the time is in the
+Speed is about **0.2–0.3 RTF** (on my 7900 xtx): `Decode` is basically free (41 ms — all the time is in the
 36-layer backbone AR). For the other two models, see [example-models.en.md](example-models.en.md).
