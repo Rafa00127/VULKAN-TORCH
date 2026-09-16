@@ -49,7 +49,7 @@ One native per language: `build/vulkantorch.dll` (C#) and `vulkantorch/_vulkanto
 |---|---|
 | OS | Any. The C++ core is cross-platform; the repo only ships the Windows build script `build_win.py` — on Linux/mac just use `cmake` |
 | Compiler | MSVC / GCC both fine |
-| Python | 3.12 |
+| Python | only 3.12 has been tried, but others should work too — the extension is built for whichever interpreter runs `build_win.py` |
 | Vulkan | a GPU driver with the Vulkan runtime |
 | .NET | SDK 10 (only needed to build the C# examples) |
 

@@ -1,0 +1,14 @@
+# Third-party deps for the PP-OCRv6 example.
+#
+# vulkantorch itself is NOT installable from here: it is not on PyPI and there
+# is no pyproject.toml. Build it with `python build_win.py` at the repo root,
+# then put the repo root on sys.path (see sharing_docs/how-to-write-code.md).
+# Only 3.12 has actually been tried; other versions should work too -- the
+# extension is built for whichever interpreter runs build_win.py.
+numpy
+opencv-python
+Pillow
+
+# Only needed by screen_translator.py, the PyQt6 screen-OCR tool:
+# PyQt6
+# requests

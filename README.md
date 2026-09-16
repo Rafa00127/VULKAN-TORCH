@@ -52,7 +52,7 @@
 |---|---|
 | OS | 不限。C++ 核跨平台；仓库只带了 Windows 的构建脚本 `build_win.py`，Linux/mac 直接 `cmake` 即可 |
 | 编译器 | MSVC / GCC 均可 |
-| Python | 3.12 |
+| Python | 作者只试过 3.12，其他版本应该都行——扩展是跟着跑 `build_win.py` 的那个解释器编的 |
 | Vulkan | 显卡驱动带 Vulkan 运行时 |
 | .NET | SDK 10（只在编 C# 示例时需要） |
 
