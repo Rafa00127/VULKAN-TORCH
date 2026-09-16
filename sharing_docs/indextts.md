@@ -1,9 +1,9 @@
 # IndexTTS 2.5 · C# 移植
 
-**🌏 Language / 语言:** **中文** · [English](IndexTTS2.5.en.md)
+**🌏 Language / 语言:** **中文** · [English](indextts.en.md)
 
 [IndexTTS 2.5](https://github.com/index-tts/index-tts)（B站，零样本音色克隆 + 情绪控制）在
-[vulkan-torch](../../README.md) 上的 C# 移植。整条推理链自包含，不依赖 Python 侧导出任何东西。
+[vulkan-torch](../README.md) 上的 C# 移植。整条推理链自包含，不依赖 Python 侧导出任何东西。
 
 ```
 参考音频 ─┬─ fbank ─► CAMPPlus ─────────────────► style ──────────────┐
@@ -75,7 +75,7 @@ happy  angry  sad  afraid  disgusted  melancholic  surprised  calm
 每个阶段都是独立的类，输入输出统一是 **PyTorch 行主序布局**，激活走 `PT [T, C]`（时间在前）。
 所有算子都要在 `Graph` 的 `Enter()`/`Exit()` 之间调用，读结果才算。
 
-下面只是**骨架**（`/* ... */` 处省略了建图和参数细节），完整的可运行串联见 [Cli.cs](IndexTts.Net/Cli.cs)。
+下面只是**骨架**（`/* ... */` 处省略了建图和参数细节），完整的可运行串联见 [Cli.cs](../example/CSharp/IndexTts.Net/Cli.cs)。
 
 ```csharp
 using var rt = new Runtime();
@@ -106,21 +106,21 @@ var mel    = new Cfm(rt, dev, dit).Inference(z, refMel, catCond, style, refMelLe
 var wav    = new BigVgan(dev, w).Forward(g, melT);                 // [L*256, 1]
 ```
 
-完整的串联见 [Cli.cs](IndexTts.Net/Cli.cs)——它就是个可读的端到端例子。
+完整的串联见 [Cli.cs](../example/CSharp/IndexTts.Net/Cli.cs)——它就是个可读的端到端例子。
 
 | 阶段 | 文件 | 入口 |
 |---|---|---|
-| tiktoken 分词 | [IndexTokenizer.cs](IndexTts.Net/IndexTokenizer.cs) | `Encode(text)` |
-| 归一化 / 分段 / 发音标注 | [TextNormalization.cs](IndexTts.Net/TextNormalization.cs) · [TextFrontend.cs](IndexTts.Net/TextFrontend.cs) | `EncodeForInference(...)` |
-| host DSP（FFT / fbank / mel） | [Dsp.cs](IndexTts.Net/Dsp.cs) | `KaldiFbank` `Stack` `MelSpectrogram` |
-| 音色风格 | [CampPlus.cs](IndexTts.Net/CampPlus.cs) | `Forward(g, fbank)` |
-| 语义编码器 | [W2vBert.cs](IndexTts.Net/W2vBert.cs) | `Forward(g, feats, mask, mean, std)` |
-| 情绪条件 | [EmoCond.cs](IndexTts.Net/EmoCond.cs) · [EmotionVector.cs](IndexTts.Net/EmotionVector.cs) | `GetEmovec` / `Blend` |
-| GPT-2 自回归 | [ArDecoder.cs](IndexTts.Net/ArDecoder.cs) · [BeamAr.cs](IndexTts.Net/BeamAr.cs) | `Prefill` / `Generate` |
-| 语义 codec | [SemanticCodec.cs](IndexTts.Net/SemanticCodec.cs) | `Decode(g, codes)` |
-| 时长规整 | [LengthRegulator.cs](IndexTts.Net/LengthRegulator.cs) | `Forward(g, x, ylens)` |
-| 扩散（s2mel） | [Dit.cs](IndexTts.Net/Dit.cs) · [Cfm.cs](IndexTts.Net/Cfm.cs) | `Cfm.Inference(...)` |
-| 声码器 | [BigVgan.cs](IndexTts.Net/BigVgan.cs) | `Forward(g, mel)` |
+| tiktoken 分词 | [IndexTokenizer.cs](../example/CSharp/IndexTtsSharp/IndexTokenizer.cs) | `Encode(text)` |
+| 归一化 / 分段 / 发音标注 | [TextNormalization.cs](../example/CSharp/IndexTtsSharp/TextNormalization.cs) · [TextFrontend.cs](../example/CSharp/IndexTtsSharp/TextFrontend.cs) | `EncodeForInference(...)` |
+| host DSP（FFT / fbank / mel） | [Dsp.cs](../example/CSharp/IndexTtsSharp/Dsp.cs) | `KaldiFbank` `Stack` `MelSpectrogram` |
+| 音色风格 | [CampPlus.cs](../example/CSharp/IndexTtsSharp/CampPlus.cs) | `Forward(g, fbank)` |
+| 语义编码器 | [W2vBert.cs](../example/CSharp/IndexTtsSharp/W2vBert.cs) | `Forward(g, feats, mask, mean, std)` |
+| 情绪条件 | [EmoCond.cs](../example/CSharp/IndexTtsSharp/EmoCond.cs) · [EmotionVector.cs](../example/CSharp/IndexTtsSharp/EmotionVector.cs) | `GetEmovec` / `Blend` |
+| GPT-2 自回归 | [ArDecoder.cs](../example/CSharp/IndexTtsSharp/ArDecoder.cs) · [BeamAr.cs](../example/CSharp/IndexTtsSharp/BeamAr.cs) | `Prefill` / `Generate` |
+| 语义 codec | [SemanticCodec.cs](../example/CSharp/IndexTtsSharp/SemanticCodec.cs) | `Decode(g, codes)` |
+| 时长规整 | [LengthRegulator.cs](../example/CSharp/IndexTtsSharp/LengthRegulator.cs) | `Forward(g, x, ylens)` |
+| 扩散（s2mel） | [Dit.cs](../example/CSharp/IndexTtsSharp/Dit.cs) · [Cfm.cs](../example/CSharp/IndexTtsSharp/Cfm.cs) | `Cfm.Inference(...)` |
+| 声码器 | [BigVgan.cs](../example/CSharp/IndexTtsSharp/BigVgan.cs) | `Forward(g, mel)` |
 
 ### 精度
 
@@ -131,7 +131,7 @@ BigVGAN 3.8e-2、Wav2Vec2-BERT 2.0e-2。
 音频，冷启动另加权重加载 3.5 s。量化版 `indextts2.5.q8.gguf`：**RTF 0.298**、权重加载降到 2.8 s，
 代价是 mel_logits 相对误差 3.3e-2 → 4.8e-2（argmax 一致 24/24 → 21/24）。
 
-bench 句是 85 个汉字（和根 README 的横向对比同一句）：
+bench 句是 85 个汉字：
 「大家好，这是一段用来测试语音合成速度的文字，长度大概九十个汉字。我们想比较两个模型在同一台机器、同一句话下各自的推理耗时和实时率，所以句子要足够长，长到能体现出差异，同时也要读起来自然。」
 
 ---

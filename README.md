@@ -202,110 +202,19 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 
 ---
 
-## 示例模型：HiggsTTS
+## 示例模型
 
-> **权重下载** —— [NeemaShioSe/HiggsTTS3.gguf](https://huggingface.co/NeemaShioSe/HiggsTTS3.gguf)（约 4GB）
+三个小模型（两个 TTS + 一个 OCR）的移植，代码在 `example/`，文档在 `sharing_docs/`：
 
-两边的示例都把 [HiggsTTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b)（4B TTS）移植了过来：
+→ **[sharing_docs/example-models.md](sharing_docs/example-models.md)** —— 总览（简介、速度、权重下载）
 
-```
-参考音频 ──► encode_ref ──► RVQ 码 ──┐(码长：给参考音频留占位符)
-             (codec)                │
-                                     └──────────┐
-                                                ▼
-文本/参考文本 ──► tokenizer ──► ids ──► build_prompt ──► prompt ──┐
-                                                                  ├──► Qwen3 36层 AR ──► 码 ──► DAC 解码 ──► wav
-                       RVQ 码（码本身，和 prompt 一起喂进 AR）─────┘        (backbone)         (decoder)
-```
-
-- **Python**：`example/python/higgstts_py/`（`model.py` / `ar.py` / `decode.py` / `tts.py`）
-- **C#**：`example/CSharp/HiggsTts.Net/`（`EncodeRef.cs` / `Ar.cs` / `DacDecoder.cs` / `HiggsTokenizer.cs` / `Resampler.cs`）
-- **权重**：[NeemaShioSe/HiggsTTS3.gguf](https://huggingface.co/NeemaShioSe/HiggsTTS3.gguf)（约 4GB，仓库不含）
-
-两者数值上对齐：DAC 解码和 AR 的 logits **逐位一致**，tokenizer 输出也一致；`encode_ref` 用同一个重采样器时 97% 的帧相同（差异只来自 Python 用 librosa、C# 用自带 Kaiser 重采样，听感无差别）。速度约 **0.2~0.3 RTF**。
+| 模型 | 语言 | 详细 |
+|---|---|---|
+| HiggsTTS v3 | C# + Python | [sharing_docs/higgstts.md](sharing_docs/higgstts.md) |
+| IndexTTS 2.5 | C# | [sharing_docs/indextts.md](sharing_docs/indextts.md) |
+| PP-OCRv6 | Python | [sharing_docs/paddleocr.md](sharing_docs/paddleocr.md) |
 
 ---
-
-## 示例模型：IndexTTS 2.5
-
-> **权重下载** —— [NeemaShioSe/IndexTTS2.5.gguf](https://huggingface.co/NeemaShioSe/IndexTTS2.5.gguf)（约 3.3GB）
-
-只做了 C# 端（懒）。零样本音色克隆 + 情绪控制，中/英/日/西等 99 种语言。
-整条链路（文本前端 → GPT-2 AR → 语义 codec → s2mel/CFM → BigVGAN，外加参考音频的
-fbank/Wav2Vec2-BERT/CAMPPlus）都在 [example/CSharp/IndexTts.Net/](example/CSharp/IndexTts.Net/) 里，自包含。
-
-```
-参考音频 ─┬─ Kaldi fbank ─► CAMPPlus ──────────────────────► style
-          ├─ Kaldi fbank ─► Wav2Vec2-BERT ─► spk_cond ─┐
-          └─ 22.05k mel ───────────────────────────────┤
-                                                       ▼
-文本 ─► 分词/归一化/分段 ─► GPT-2 AR ─► codec ─► length_regulator ─► CFM(25 步 Euler+CFG) ─► BigVGAN ─► wav
-```
-
-```bat
-dotnet build example\CSharp\IndexTts.Net -c Release
-
-example\CSharp\IndexTts.Net\bin\Release\net10.0\IndexTts.Net.exe synth ^
-  --model model\indextts2.5\indextts2.5.f16.gguf ^
-  --ref-wav data\ref_audio\melinaref_24k.wav ^
-  --text "大家好，这是一个测试。" --out data\indextts\out.wav
-```
-
-| 参数 | 说明 |
-|---|---|
-| `--model` | **必填**，IndexTTS 2.5 的 GGUF；[下载](https://huggingface.co/NeemaShioSe/IndexTTS2.5.gguf)（约 3.3GB，或用 `tools/convert/convert_index_tts2_to_gguf.py` 自己转） |
-| `--ref-wav` | 参考音频（音色来源），默认 `data/ref_audio/melinaref_24k.wav` |
-| `--text` | 要合成的文本，可加 `<字\|读音>` 发音标注 |
-| `--emo` | 情绪权重，如 `--emo "happy=0.6,calm=0.4"`（8 种：happy/angry/sad/afraid/disgusted/melancholic/surprised/calm） |
-| `--lang` `--out` `--seed` `--max-steps` | 语言 / 输出 / 采样种子 / 步数上限 |
-| `--top-p` `--top-k` `--temperature` `--rep-penalty` | 采样参数（默认 0.8 / 30 / 0.8 / 10） |
-| `--num-beams` | 束搜索宽度，默认 1 |
-| `--cfg-rate` `--diffusion-steps` | CFM 的 CFG 强度和扩散步数（默认 0.7 / 25） |
-| `--duration-factor` | 语速/时长缩放 |
-| `--no-graph-cache` | 关掉 AR 的图缓存（A/B 用） |
-| `-h` `--help` | 打印全部参数 |
-
-### 速度（RX 7900 XTX / Vulkan / f16 GGUF）
-
-`synth` 单句合成，各阶段耗时与 RTF（RTF = 推理耗时 / 音频时长，和官方一样不含权重加载）：
-
-```bat
-IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
-  --ref-wav data\ref_audio\melinaref_24k.wav --text "..." --out data\indextts\out.wav
-```
-
-| 文本长度 | 音频 | GPT-2 AR | s2mel (codec+CFM) | BigVGAN | 推理总 | RTF |
-|---|---|---|---|---|---|---|
-| 11 字 | 3.51 s | 442 ms | 631 ms | 450 ms | 1.77 s | 0.504 |
-| 33 字 | 8.94 s | 802 ms | 991 ms | 977 ms | 3.01 s | 0.337 |
-| 93 字 | 18.40 s | 1391 ms | 1992 ms | 2123 ms | 5.76 s | 0.313 |
-
-对照官方在 **RTX 4090** 上公布的 2.5 RTF（`kv_cache=True`）：bf16 ~0.20、fp32 ~0.21（7~200 字）。
-本移植折算约慢 **1.5×**，差距主要来自硬件（7900 XTX vs 4090）和官方用 bf16 + CUDA 融合算子，这里是 f16 GGUF + 通用 Vulkan 后端。
-长句单段时 AR / s2mel / BigVGAN 三段耗时几乎均分。权重加载约 2–3 s（不计入上表）。
-
-## 示例模型：PP-OCRv6（PaddleOCR）
-
-> **权重下载** —— [NeemaShioSe/paddleocr.gguf](https://huggingface.co/NeemaShioSe/paddleocr.gguf)（rec + det + dict）
-
-文本检测 + 识别，只做了 Python 端（`example/python/ocr_py/`），自包含 `.pyd`。
-用法、精度/速度结论见 [example/python/PaddleOCR.md](example/python/PaddleOCR.md)。
-
-## 两个 TTS 移植的横向对比
-
-同一台机（RX 7900 XTX / Vulkan）、同一句中文（85 个汉字）、同一个参考音频、`--seed 42`，
-各跑 5 次取最好（丢掉第一次）。RTF 不含权重加载：
-
-| 模型 | 音频 | 推理耗时 | RTF |
-|---|---|---|---|
-| HiggsTTS v3（~4B，`higgs-v3-tts.gguf`，9.34 GB） | 23.76 s | 6.86 s | **0.288** |
-| IndexTTS 2.5（~0.8B，`indextts2.5.f16.gguf`，3.3 GB） | 18.40 s | 5.78 s | **0.314** |
-| IndexTTS 2.5（量化版，`indextts2.5.q8.gguf`，2.0 GB） | 17.76 s | 5.29 s | **0.298** |
-
-IndexTTS 现在单句绝对耗时**反超** Higgs（5.78 vs 6.86 s）。Higgs 生成的音频更长（23.76 vs 18.40 s），
-所以它的 RTF 更低 —— RTF 受"一句话生出多长音频"影响很大，别只看它。
-Higgs 的 `Decode` 几乎免费（41 ms，耗时全在 36 层 backbone AR），IndexTTS 则是 AR / s2mel / BigVGAN 三家平分。
-测试句和完整命令见 [IndexTTS2.5.md](example/CSharp/IndexTTS2.5.md)。
 
 ## 许可
 

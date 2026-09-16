@@ -1,9 +1,9 @@
 # IndexTTS 2.5 · C# Port
 
-**🌏 Language / 语言:** [中文](IndexTTS2.5.md) · **English**
+**🌏 Language / 语言:** [中文](indextts.md) · **English**
 
 A C# port of [IndexTTS 2.5](https://github.com/index-tts/index-tts) (Bilibili; zero-shot voice
-cloning + emotion control) on top of [vulkan-torch](../../README.md). The whole inference
+cloning + emotion control) on top of [vulkan-torch](../README.en.md). The whole inference
 chain is self-contained — nothing needs to be exported from Python.
 
 ```
@@ -78,7 +78,7 @@ Each stage is its own class; inputs/outputs are uniformly **PyTorch row-major**,
 result is what computes.
 
 Below is just the **skeleton** (graph-building and parameter details elided at `/* ... */`); the full
-runnable wiring is in [Cli.cs](IndexTts.Net/Cli.cs).
+runnable wiring is in [Cli.cs](../example/CSharp/IndexTts.Net/Cli.cs).
 
 ```csharp
 using var rt = new Runtime();
@@ -109,21 +109,21 @@ var mel    = new Cfm(rt, dev, dit).Inference(z, refMel, catCond, style, refMelLe
 var wav    = new BigVgan(dev, w).Forward(g, melT);                 // [L*256, 1]
 ```
 
-The complete wiring is [Cli.cs](IndexTts.Net/Cli.cs) — a readable end-to-end example.
+The complete wiring is [Cli.cs](../example/CSharp/IndexTts.Net/Cli.cs) — a readable end-to-end example.
 
 | Stage | File | Entry |
 |---|---|---|
-| tiktoken tokenize | [IndexTokenizer.cs](IndexTts.Net/IndexTokenizer.cs) | `Encode(text)` |
-| normalize / segment / pron. | [TextNormalization.cs](IndexTts.Net/TextNormalization.cs) · [TextFrontend.cs](IndexTts.Net/TextFrontend.cs) | `EncodeForInference(...)` |
-| host DSP (FFT / fbank / mel) | [Dsp.cs](IndexTts.Net/Dsp.cs) | `KaldiFbank` `Stack` `MelSpectrogram` |
-| timbre / style | [CampPlus.cs](IndexTts.Net/CampPlus.cs) | `Forward(g, fbank)` |
-| semantic encoder | [W2vBert.cs](IndexTts.Net/W2vBert.cs) | `Forward(g, feats, mask, mean, std)` |
-| emotion conditioning | [EmoCond.cs](IndexTts.Net/EmoCond.cs) · [EmotionVector.cs](IndexTts.Net/EmotionVector.cs) | `GetEmovec` / `Blend` |
-| GPT-2 autoregressive | [ArDecoder.cs](IndexTts.Net/ArDecoder.cs) · [BeamAr.cs](IndexTts.Net/BeamAr.cs) | `Prefill` / `Generate` |
-| semantic codec | [SemanticCodec.cs](IndexTts.Net/SemanticCodec.cs) | `Decode(g, codes)` |
-| duration regulator | [LengthRegulator.cs](IndexTts.Net/LengthRegulator.cs) | `Forward(g, x, ylens)` |
-| diffusion (s2mel) | [Dit.cs](IndexTts.Net/Dit.cs) · [Cfm.cs](IndexTts.Net/Cfm.cs) | `Cfm.Inference(...)` |
-| vocoder | [BigVgan.cs](IndexTts.Net/BigVgan.cs) | `Forward(g, mel)` |
+| tiktoken tokenize | [IndexTokenizer.cs](../example/CSharp/IndexTtsSharp/IndexTokenizer.cs) | `Encode(text)` |
+| normalize / segment / pron. | [TextNormalization.cs](../example/CSharp/IndexTtsSharp/TextNormalization.cs) · [TextFrontend.cs](../example/CSharp/IndexTtsSharp/TextFrontend.cs) | `EncodeForInference(...)` |
+| host DSP (FFT / fbank / mel) | [Dsp.cs](../example/CSharp/IndexTtsSharp/Dsp.cs) | `KaldiFbank` `Stack` `MelSpectrogram` |
+| timbre / style | [CampPlus.cs](../example/CSharp/IndexTtsSharp/CampPlus.cs) | `Forward(g, fbank)` |
+| semantic encoder | [W2vBert.cs](../example/CSharp/IndexTtsSharp/W2vBert.cs) | `Forward(g, feats, mask, mean, std)` |
+| emotion conditioning | [EmoCond.cs](../example/CSharp/IndexTtsSharp/EmoCond.cs) · [EmotionVector.cs](../example/CSharp/IndexTtsSharp/EmotionVector.cs) | `GetEmovec` / `Blend` |
+| GPT-2 autoregressive | [ArDecoder.cs](../example/CSharp/IndexTtsSharp/ArDecoder.cs) · [BeamAr.cs](../example/CSharp/IndexTtsSharp/BeamAr.cs) | `Prefill` / `Generate` |
+| semantic codec | [SemanticCodec.cs](../example/CSharp/IndexTtsSharp/SemanticCodec.cs) | `Decode(g, codes)` |
+| duration regulator | [LengthRegulator.cs](../example/CSharp/IndexTtsSharp/LengthRegulator.cs) | `Forward(g, x, ylens)` |
+| diffusion (s2mel) | [Dit.cs](../example/CSharp/IndexTtsSharp/Dit.cs) · [Cfm.cs](../example/CSharp/IndexTtsSharp/Cfm.cs) | `Cfm.Inference(...)` |
+| vocoder | [BigVgan.cs](../example/CSharp/IndexTtsSharp/BigVgan.cs) | `Forward(g, mel)` |
 
 ### Accuracy
 
@@ -135,7 +135,7 @@ inference for 18.40 s of audio, plus a 3.5 s weight load on a cold start. The qu
 (`indextts2.5.q8.gguf`) runs at **RTF 0.298** with the weight load down to 2.8 s, at the cost of
 mel_logits relative error 3.3e-2 → 4.8e-2 (argmax agreement 24/24 → 21/24).
 
-The bench sentence is 85 Chinese characters (the same one the root README's head-to-head uses):
+The bench sentence is 85 Chinese characters:
 「大家好，这是一段用来测试语音合成速度的文字，长度大概九十个汉字。我们想比较两个模型在同一台机器、同一句话下各自的推理耗时和实时率，所以句子要足够长，长到能体现出差异，同时也要读起来自然。」
 
 ---

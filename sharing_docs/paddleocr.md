@@ -1,18 +1,11 @@
-# Python 示例（vulkan-torch）
+# PP-OCRv6（PaddleOCR）· Python 移植
 
-**🌏 Language / 语言:** **中文** · [English](PaddleOCR.md)
+**🌏 Language / 语言:** **中文** · [English](paddleocr.en.md)
 
-| 目录 | 模型 |
-|---|---|
-| [`ocr_py/`](ocr_py/) | PP-OCRv6 文本检测 + 识别（PaddleOCR 移植） |
-| [`higgstts_py/`](higgstts_py/) | HiggsTTS（参考音色 → 语音） |
+从零把 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 的 **PP-OCRv6_medium_det / _rec** 移植到 [vulkan-torch](../README.md)，
+代码在 [`example/python/ocr_py/`](../example/python/ocr_py/)，既可以检测也能识别（默认只做识别）。
 
----
-
-## `ocr_py/` —— PaddleOCR（PP-OCRv6）跑在 vulkan-torch 上
-
-从零把 PaddleOCR 的 **PP-OCRv6_medium_det / _rec** 移植到 vulkan-torch，
-既可以检测也能识别（默认只做识别）。
+所有示例模型的概览：[example-models.md](example-models.md)。
 
 ```python
 import sys
@@ -56,7 +49,7 @@ vulkan-torch 每换一个输入尺寸就要建一次计算图，比 eager 的 Py
 固定形状的识别——视频字幕、galgame 台词、任何裁剪尺寸会重复的场景——**没有差距**
 （B：0.084 s vs torch 0.10 s）。
 
-**任何情况下都比 CPU 流水线快 7–14×**。换来的是 vulkan-torch 能在任何 Vulkan 卡上跑，
+**任何情况下都比 CPU 流水线快 7–14×**。总体还是比“真torch”差一些，但换来的是 vulkan-torch 能在任何 Vulkan 卡上跑，
 **不需要 ROCm 或 CUDA**。
 
 哪里不同也就是几个标点/引号字形，内容没差。
@@ -103,7 +96,7 @@ ocr_py/
 
 ### 屏幕划词翻译工具
 
-[`screen_translator.py`](ocr_py/screen_translator.py) 是基于本小模型的一个小 PyQt6 桌面工具：
+[`screen_translator.py`](../example/python/ocr_py/screen_translator.py) 是基于本小模型的一个小 PyQt6 桌面工具：
 按快捷键（默认 `Ctrl+Alt+Shift+O`，可自定义）或点按钮，在屏幕上框选任意文字，它会识别框内内容
 （默认只识别；勾「多行/整块」走 det+rec）——勾上「翻译」再用 OpenAI 兼容的 LLM 端点翻译
 （base/model/key 都在 config 里）。竖排（漫画）文字自动处理（瘦高的框转 90°）。界面语言可切换

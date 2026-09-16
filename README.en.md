@@ -201,111 +201,21 @@ For the long-audio synth above (~550 frames / 21.5 s audio), the RTFs: **C++ 0.2
 
 ---
 
-## Example Model: HiggsTTS
+## Example Models
 
-> **Weights download** — [NeemaShioSe/HiggsTTS3.gguf](https://huggingface.co/NeemaShioSe/HiggsTTS3.gguf) (~4 GB)
+Three small-model ports (two TTS + one OCR) — the code lives in `example/`, the docs in
+`sharing_docs/`:
 
-Both examples port [HiggsTTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) (a 4B TTS):
+→ **[sharing_docs/example-models.en.md](sharing_docs/example-models.en.md)** — overview (summary,
+speed, weight downloads)
 
-```
-reference audio ──► encode_ref ──► RVQ codes ──┐(their length: how many audio
-                   (codec)                     │ placeholders to reserve)
-                                                └──────────┐
-                                                           ▼
-text / ref text ──► tokenizer ──► ids ──► build_prompt ──► prompt ──┐
-                                                                    ├──► Qwen3 36-layer AR ──► codes ──► DAC decode ──► wav
-              RVQ codes (the codes themselves, fed alongside prompt)─┘        (backbone)                   (decoder)
-```
-
-- **Python**: `example/python/higgstts_py/` (`model.py` / `ar.py` / `decode.py` / `tts.py`)
-- **C#**: `example/CSharp/HiggsTts.Net/` (`EncodeRef.cs` / `Ar.cs` / `DacDecoder.cs` / `HiggsTokenizer.cs` / `Resampler.cs`)
-- **Weights**: [NeemaShioSe/HiggsTTS3.gguf](https://huggingface.co/NeemaShioSe/HiggsTTS3.gguf) (~4 GB, not in the repo)
-
-Numerically aligned: DAC decode and AR logits are **bit-identical**, tokenizer output matches too; with the same resampler, `encode_ref` gives 97% identical frames (the only diff comes from Python using librosa vs C# using its own Kaiser resampler — inaudible). Speed ~**0.2–0.3 RTF**.
+| Model | Language | Details |
+|---|---|---|
+| HiggsTTS v3 | C# + Python | [sharing_docs/higgstts.en.md](sharing_docs/higgstts.en.md) |
+| IndexTTS 2.5 | C# | [sharing_docs/indextts.en.md](sharing_docs/indextts.en.md) |
+| PP-OCRv6 | Python | [sharing_docs/paddleocr.en.md](sharing_docs/paddleocr.en.md) |
 
 ---
-
-## Example Model: IndexTTS 2.5
-
-> **Weights download** — [NeemaShioSe/IndexTTS2.5.gguf](https://huggingface.co/NeemaShioSe/IndexTTS2.5.gguf) (~3.3 GB)
-
-C#-only (lazy). Zero-shot voice cloning + emotion control, 99 languages including zh/en/ja/es.
-The whole chain (text frontend → GPT-2 AR → semantic codec → s2mel/CFM → BigVGAN, plus the reference audio's fbank/Wav2Vec2-BERT/CAMPPlus) lives in [example/CSharp/IndexTts.Net/](example/CSharp/IndexTts.Net/), self-contained.
-
-```
-reference audio ─┬─ Kaldi fbank ─► CAMPPlus ──────────────────────► style
-                 ├─ Kaldi fbank ─► Wav2Vec2-BERT ─► spk_cond ─┐
-                 └─ 22.05k mel ───────────────────────────────┤
-                                                             ▼
-text ─► tokenize/normalize/segment ─► GPT-2 AR ─► codec ─► length_regulator ─► CFM(25-step Euler+CFG) ─► BigVGAN ─► wav
-```
-
-```bat
-dotnet build example\CSharp\IndexTts.Net -c Release
-
-example\CSharp\IndexTts.Net\bin\Release\net10.0\IndexTts.Net.exe synth ^
-  --model model\indextts2.5\indextts2.5.f16.gguf ^
-  --ref-wav data\ref_audio\melinaref_24k.wav ^
-  --text "大家好，这是一个测试。" --out data\indextts\out.wav
-```
-
-| Arg | Description |
-|---|---|
-| `--model` | **required**, the IndexTTS 2.5 GGUF; [download](https://huggingface.co/NeemaShioSe/IndexTTS2.5.gguf) (~3.3 GB, or convert it yourself with `tools/convert/convert_index_tts2_to_gguf.py`) |
-| `--ref-wav` | reference audio (the timbre source), defaults to `data/ref_audio/melinaref_24k.wav` |
-| `--text` | text to synthesize; supports `<char\|pronunciation>` annotations |
-| `--emo` | emotion weights, e.g. `--emo "happy=0.6,calm=0.4"` (8 kinds: happy/angry/sad/afraid/disgusted/melancholic/surprised/calm) |
-| `--lang` `--out` `--seed` `--max-steps` | language / output / seed / step cap |
-| `--top-p` `--top-k` `--temperature` `--rep-penalty` | sampling params (default 0.8 / 30 / 0.8 / 10) |
-| `--num-beams` | beam width, default 1 |
-| `--cfg-rate` `--diffusion-steps` | CFM CFG strength and diffusion steps (default 0.7 / 25) |
-| `--duration-factor` | speech-rate / duration scale |
-| `--no-graph-cache` | disable the AR graph cache (for A/B) |
-| `-h` `--help` | print all args |
-
-### Speed (RX 7900 XTX / Vulkan / f16 GGUF)
-
-Single-sentence `synth`, per-stage time and RTF (RTF = inference time / audio duration, excluding weight load, same as the official):
-
-```bat
-IndexTts.Net.exe synth --model model\indextts2.5\indextts2.5.f16.gguf ^
-  --ref-wav data\ref_audio\melinaref_24k.wav --text "..." --out data\indextts\out.wav
-```
-
-| Text length | Audio | GPT-2 AR | s2mel (codec+CFM) | BigVGAN | Inference total | RTF |
-|---|---|---|---|---|---|---|
-| 11 chars | 3.51 s | 442 ms | 631 ms | 450 ms | 1.77 s | 0.504 |
-| 33 chars | 8.94 s | 802 ms | 991 ms | 977 ms | 3.01 s | 0.337 |
-| 93 chars | 18.40 s | 1391 ms | 1992 ms | 2123 ms | 5.76 s | 0.313 |
-
-For reference, the official 2.5 RTF on an **RTX 4090** (`kv_cache=True`): bf16 ~0.20, fp32 ~0.21 (7–200 chars).
-This port is roughly **1.5×** slower, mostly due to hardware (7900 XTX vs 4090) and the official using bf16 + CUDA-fused kernels, versus f16 GGUF + a generic Vulkan backend here.
-For a single long sentence the three stages (AR / s2mel / BigVGAN) take almost equal time. Weight load is ~2–3 s (not counted above).
-
-## Example Model: PP-OCRv6 (PaddleOCR)
-
-> **Weights download** — [NeemaShioSe/paddleocr.gguf](https://huggingface.co/NeemaShioSe/paddleocr.gguf) (rec + det + dict)
-
-Text detection + recognition, Python-only (`example/python/ocr_py/`), self-contained `.pyd`.
-Usage and the precision/speed findings are in [example/python/PaddleOCR.md](example/python/PaddleOCR.md).
-
-## Head-to-Head: the Two TTS Ports
-
-Same machine (RX 7900 XTX / Vulkan), same 85-character Chinese sentence, same reference audio,
-`--seed 42`, best of 5 with the first run discarded (RTF excludes the weight load):
-
-| Model | Audio | Inference | RTF |
-|---|---|---|---|
-| HiggsTTS v3 (~4B, `higgs-v3-tts.gguf`, 9.34 GB) | 23.76 s | 6.86 s | **0.288** |
-| IndexTTS 2.5 (~0.8B, `indextts2.5.f16.gguf`, 3.3 GB) | 18.40 s | 5.78 s | **0.314** |
-| IndexTTS 2.5 (quantized, `indextts2.5.q8.gguf`, 2.0 GB) | 17.76 s | 5.29 s | **0.298** |
-
-IndexTTS now beats Higgs on raw single-sentence time (5.78 vs 6.86 s). Higgs's audio came out
-longer (23.76 vs 18.40 s), which is what keeps its RTF lower — RTF is sensitive to how much audio
-a sentence produces, so don't read it on its own.
-Higgs's `Decode` is basically free (41 ms — all the time is in the 36-layer backbone AR), while
-IndexTTS splits it three ways: AR / s2mel / BigVGAN. The bench sentence and the exact commands
-are in [IndexTTS2.5.en.md](example/CSharp/IndexTTS2.5.en.md).
 
 ## License
 

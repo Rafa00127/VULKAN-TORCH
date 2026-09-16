@@ -1,18 +1,13 @@
-# Python examples (vulkan-torch)
+# PP-OCRv6 (PaddleOCR) · Python Port
 
-**🌏 Language / 语言:** [中文](PaddleOCR.zh-CN.md) · **English**
+**🌏 Language / 语言:** [中文](paddleocr.md) · **English**
 
-| dir | model |
-|---|---|
-| [`ocr_py/`](ocr_py/) | PP-OCRv6 text detection + recognition (PaddleOCR port) |
-| [`higgstts_py/`](higgstts_py/) | HiggsTTS (reference voice → speech) |
+A from-scratch port of [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)'s
+**PP-OCRv6_medium_det / _rec** to [vulkan-torch](../README.en.md), code in
+[`example/python/ocr_py/`](../example/python/ocr_py/),
+with the ability of both recognition and detection (recognition only by default).
 
----
-
-## `ocr_py/` — PaddleOCR (PP-OCRv6) on vulkan-torch
-
-A from-scratch port of PaddleOCR's **PP-OCRv6_medium_det / _rec** to vulkan-torch,
-has the ability of both recognition and dectection. (recognition only by default).
+The whole set of ported models: [example-models.en.md](example-models.en.md).
 
 ```python
 import sys
@@ -105,7 +100,7 @@ ocr_py/
 
 ### Screen translator tool
 
-[`screen_translator.py`](ocr_py/screen_translator.py) is a small PyQt6 desktop app built on the
+[`screen_translator.py`](../example/python/ocr_py/screen_translator.py) is a small PyQt6 desktop app built on the
 port: hit the hotkey (default `Ctrl+Alt+Shift+O`, customizable) or click the button, drag a box
 over any on-screen text, and it OCRs the box (rec-only, or det+rec for multi-line) and — if 翻译
 is ticked — translates it via an OpenAI-compatible LLM endpoint (base/model/key in the config).
