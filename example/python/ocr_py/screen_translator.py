@@ -8,15 +8,19 @@ recognised (rec-only -> text) and, if the translate box is ticked, sent to the L
     python example/python/ocr_py/screen_translator.py [--config PATH]
 
 The UI is bilingual (中文 / English); pick the language in 「设置」/ Settings (saved in
-config; takes effect on restart). LLM + hotkey + options live in the config file
-(default: <repo>/data/ocr/screen_translator.json, gitignored):
+config; takes effect on restart). Everything — LLM, hotkey, OCR model, options — lives in
+the config file:
 
     "ui_lang":   "zh",                 # "zh" | "en"
     "api_base":  "https://api.deepseek.com",   # any OpenAI-compatible base URL
     "api_model": "",                   # must be set (no default)
-    "api_key":   ""                    # fill in here or in Settings
+    "api_key":   "",                   # fill in here or in Settings
+    "model_dir": "",                   # "" = repo default (model/ppocrv6/gguf/)
+    "precision": "f32",                # "f32" | "f16"
 
-No paths are hardcoded; the API key lives in the (gitignored) config.
+It resolves to an existing <repo>/data/ocr/screen_translator.json, else to
+%APPDATA%/screen-translator/config.json (outside the repo, so a copy of the tool next to
+another project keeps its own settings); --config PATH / $OCR_TRANSLATOR_CONFIG override.
 The hotkey is a SYSTEM-WIDE hotkey (Windows RegisterHotKey); OCR + network run on one
 persistent worker thread, so the UI never blocks.
 """
@@ -25,6 +29,7 @@ import ctypes
 import json
 import os
 import queue
+import subprocess
 import sys
 import time
 
@@ -36,12 +41,15 @@ for p in (ROOT, PYDIR):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from PyQt6.QtCore import Qt, QRect, QThread, pyqtSignal, QAbstractNativeEventFilter
-from PyQt6.QtGui import (QPixmap, QImage, QPainter, QPen, QColor, QGuiApplication,
-                         QKeySequence, QShortcut)
+from PyQt6.QtCore import (Qt, QRect, QRectF, QPointF, QThread, pyqtSignal,
+                          QAbstractNativeEventFilter)
+from PyQt6.QtGui import (QPixmap, QImage, QPainter, QPen, QColor, QFont, QPainterPath,
+                         QTextLayout, QTextOption, QGuiApplication, QKeySequence,
+                         QShortcut, QAction, QIcon)
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QDialog, QVBoxLayout,
                              QHBoxLayout, QFormLayout, QPushButton, QCheckBox, QPlainTextEdit,
-                             QLabel, QComboBox, QKeySequenceEdit, QDialogButtonBox, QLineEdit)
+                             QLabel, QComboBox, QKeySequenceEdit, QDialogButtonBox, QLineEdit,
+                             QFileDialog, QSpinBox, QMenu, QSystemTrayIcon)
 
 # (native name, English name) — the target language list; shown as "→ <native>"
 LANGUAGES = [("中文", "Chinese"), ("English", "English"), ("日本語", "Japanese"),
@@ -50,7 +58,10 @@ LANGUAGES = [("中文", "Chinese"), ("English", "English"), ("日本語", "Japan
 DEFAULT_CONFIG = {"hotkey": "Ctrl+Alt+Shift+O", "target": "Chinese", "translate": False,
                   "det": False, "orient": "auto", "reasoning": "off", "ui_lang": "zh",
                   "api_base": "https://api.deepseek.com", "api_model": "",
-                  "api_key": ""}
+                  "api_key": "", "model_dir": "", "precision": "f32",
+                  "overlay": True, "overlay_pos": None, "overlay_size": 28,
+                  "overlay_alpha": 150, "overlay_src": True, "overlay_locked": True,
+                  "overlay_opacity": 100}
 
 
 # ── i18n ─────────────────────────────────────────────────────────────────────────
@@ -81,7 +92,29 @@ STRINGS = {
         "settings_title": "设置",
         "settings_hotkey": "截图快捷键",
         "settings_hotkey_tip": "点这里然后按组合键。需要至少一个修饰键（Ctrl/Alt/Shift/Win）。",
+        "chk_overlay": "字幕",
+        "chk_overlay_tip": "把识别结果显示成置顶悬浮字幕（像音乐播放器的歌词），默认鼠标穿透、不挡操作。",
+        "btn_move": "移动",
+        "btn_move_tip": "勾上后可拖动字幕层定位（再取消勾选就锁定并记住位置）。",
+        "settings_overlay": "字幕显示原文",
+        "settings_overlay_opacity": "整体不透明度 (%)",
+        "settings_overlay_lock": "锁定位置（鼠标穿透）",
+        "settings_overlay_lock_tip": "勾上 = 字幕层不收鼠标（点击落到下面的窗口），也不能拖；取消勾选就能拖到任意位置。",
+        "btn_quit": "退出",
+        "tray_hint": "已缩到托盘 · 双击图标恢复窗口，右键退出",
+        "settings_overlay_size": "译文字号",
+        "settings_overlay_alpha": "字幕背景浓度",
         "settings_uilang": "界面语言",
+        "settings_model_dir": "识别模型目录",
+        "settings_model_dir_tip": "留空 = 仓库默认（model/ppocrv6/gguf/），也可用环境变量 OCR_MODEL_DIR。\n改这里会在下次识别时重新加载模型。",
+        "settings_precision": "精度",
+        "settings_precision_tip": "f16 需要该目录里存在对应的 f16 GGUF；缺了就回落 f32。",
+        "ph_model_dir": "留空 = 仓库默认 model/ppocrv6/gguf",
+        "settings_browse": "浏览…",
+        "settings_config": "配置文件",
+        "settings_config_tip": "换位置：启动时加 --config <路径>，或设环境变量 OCR_TRANSLATOR_CONFIG。",
+        "btn_open_config": "打开所在文件夹",
+        "status_model_changed": "设置已保存 —— 模型将在下次识别时重新加载",
         "settings_model": "模型",
         "ph_base": "https://api.deepseek.com  (OpenAI 兼容 base url)",
         "ph_model": "填模型名，如 deepseek-chat / deepseek-reasoner",
@@ -114,7 +147,29 @@ STRINGS = {
         "settings_title": "Settings",
         "settings_hotkey": "Capture hotkey",
         "settings_hotkey_tip": "Click, then press the combo. Needs at least one modifier (Ctrl/Alt/Shift/Win).",
+        "chk_overlay": "Subtitle",
+        "chk_overlay_tip": "Show the result as a pinned on-screen subtitle (music-player-lyrics style); click-through by default so it never blocks your work.",
+        "btn_move": "Move",
+        "btn_move_tip": "Tick to drag the subtitle where you want it (untick to lock the position in).",
+        "settings_overlay": "Subtitle: show source",
+        "settings_overlay_opacity": "Overall opacity (%)",
+        "settings_overlay_lock": "Lock position (click-through)",
+        "settings_overlay_lock_tip": "Ticked = the subtitle ignores the mouse (clicks fall through to what is below) and cannot be dragged. Untick to drag it anywhere.",
+        "btn_quit": "Quit",
+        "tray_hint": "Minimized to the tray · double-click the icon to restore, right-click to quit",
+        "settings_overlay_size": "Subtitle font size",
+        "settings_overlay_alpha": "Subtitle background",
         "settings_uilang": "UI language",
+        "settings_model_dir": "OCR model dir",
+        "settings_model_dir_tip": "Empty = the repo default (model/ppocrv6/gguf/); OCR_MODEL_DIR works too.\nChanging it reloads the model on the next capture.",
+        "settings_precision": "Precision",
+        "settings_precision_tip": "f16 needs an f16 GGUF in that dir; falls back to f32 otherwise.",
+        "ph_model_dir": "empty = repo default model/ppocrv6/gguf",
+        "settings_browse": "Browse…",
+        "settings_config": "Config file",
+        "settings_config_tip": "To move it: pass --config <path>, or set OCR_TRANSLATOR_CONFIG.",
+        "btn_open_config": "Open folder",
+        "status_model_changed": "Saved — the model reloads on the next capture",
         "settings_model": "Model",
         "ph_base": "https://api.deepseek.com  (OpenAI-compatible base url)",
         "ph_model": "model name, e.g. deepseek-chat / deepseek-reasoner",
@@ -153,6 +208,45 @@ def save_config(path, cfg):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception as e:      # noqa: BLE001
         print(f"warn: could not save {path}: {e}", file=sys.stderr)
+
+
+def default_config_path():
+    """Settings live outside the repo by default.
+
+    The old default (<repo>/data/ocr/screen_translator.json) travelled with the checkout,
+    so the settings effectively vanished as soon as the tool was run from a copy."""
+    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "screen-translator", "config.json")
+
+
+def resolve_config_path(override=None):
+    """Which settings file this run uses.
+
+    ``--config`` / OCR_TRANSLATOR_CONFIG wins outright. Otherwise an **existing in-repo
+    <repo>/data/ocr/screen_translator.json** wins (that is where the settings have always
+    lived, and nothing is moved behind your back); only when there is no such file — e.g.
+    the tool copied next to another project — does it fall back to the user profile.
+    """
+    if override:
+        return override
+    default = default_config_path()
+    legacy = os.path.join(ROOT, "data", "ocr", "screen_translator.json")
+    return legacy if (not os.path.exists(default) and os.path.exists(legacy)) else default
+
+
+def open_config_folder(path):
+    """Reveal the config file in the OS file manager (best effort)."""
+    d = os.path.dirname(os.path.abspath(path))
+    try:
+        os.makedirs(d, exist_ok=True)
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", path])
+        else:
+            subprocess.Popen(["xdg-open", d])
+    except Exception as e:      # noqa: BLE001
+        print(f"warn: could not open {d}: {e}", file=sys.stderr)
 
 
 # ── global hotkey (Windows) ──────────────────────────────────────────────────────
@@ -303,7 +397,15 @@ class Worker(QThread):
         super().__init__()
         self._q = queue.Queue()
         self._ocr = None
+        self._model = ("", "")       # (model_dir, precision) the live _ocr was built with
         self._llm = {"base": "", "model": "", "key": ""}
+
+    def set_model(self, model_dir, precision):
+        """Repoint OCR at another model dir. Lazy: dropping the instance frees the old
+        weights, so the next job loads the new ones (costs a few seconds, once)."""
+        if (model_dir, precision) != self._model:
+            self._model = (model_dir, precision)
+            self._ocr = None
 
     def set_llm(self, base, model, key):
         self._llm = {"base": base or "", "model": model or "", "key": key or ""}
@@ -331,7 +433,10 @@ class Worker(QThread):
                 arr = np.asarray(img)
                 if self._ocr is None:
                     from ocr_py.ocr import Ocr
-                    self._ocr = Ocr()
+                    kw = {"precision": self._model[1] or None}
+                    if self._model[0]:
+                        kw["model_dir"] = self._model[0]
+                    self._ocr = Ocr(**kw)
                 # det off = one pre-cut line, nothing to order; det on = a region that
                 # may hold several boxes, so read it in reading order
                 text = read_region(self._ocr, arr) if det else self._ocr.read_line(arr)
@@ -435,10 +540,196 @@ class CaptureOverlay(QWidget):
             self.picked.emit(None)
 
 
+# ── pinned subtitle (lyrics-style) ───────────────────────────────────────────────
+
+class SubtitleOverlay(QWidget):
+    """置顶字幕窗：原文一行（小/淡）+ 译文一行（大/描边），像播放器歌词钉在屏幕上。
+
+    **默认鼠标穿透**（``WindowTransparentForInput``）：点不到它，也就不挡下面任何操作；
+    主窗口的「移动」按钮解锁之后才能拖动（这时画一圈虚线边框提示）。
+    锁定/解锁靠切换窗口旗标实现——Qt 改旗标会把窗口隐藏掉，所以改完必须重新 ``show()``。"""
+
+    moved = pyqtSignal(int, int)
+
+    OUTLINE = QColor(0, 20, 70)       # 描边色（深蓝，贴截图那种观感）
+    PAD, GAP, RADIUS = 18, 6, 12      # 内边距 / 两行间距 / 圆角
+    SRC_SCALE = 0.55                  # 原文行相对译文的字号比
+
+    def __init__(self, cfg):
+        super().__init__(None, Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.WindowStaysOnTopHint
+                         | Qt.WindowType.WindowDoesNotAcceptFocus
+                         | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self._src = self._dst = ""
+        self._drag = None
+        self._locked = True            # 锁定 == 穿透
+        self._placed = False
+        self._saved_pos = None
+        self.apply_cfg(cfg)
+
+    # -- config / content --------------------------------------------------------
+
+    def apply_cfg(self, cfg):
+        self._size = int(cfg.get("overlay_size") or 28)
+        alpha = cfg.get("overlay_alpha")
+        self._alpha = 150 if alpha is None else int(alpha)
+        self._show_src = bool(cfg.get("overlay_src", True))
+        self._saved_pos = cfg.get("overlay_pos")
+        op = cfg.get("overlay_opacity")
+        self.setWindowOpacity(max(0.2, min(1.0, (100 if op is None else int(op)) / 100.0)))
+        self._relayout()
+        self.update()
+
+    def set_text(self, src, dst=""):
+        """src = 识别出的原文；dst = 译文（空 = 没翻译 / 没开翻译 → 原文当主行显示）。"""
+        self._src, self._dst = (src or "").strip(), (dst or "").strip()
+        self._relayout()
+        if not self._placed and (self._src or self._dst):
+            self.place(self._saved_pos)      # 首次有内容时才定尺寸，定了再摆位置
+            self._placed = True
+        self.update()
+
+    def set_visible(self, on):
+        if on:
+            self.show()
+            self.raise_()
+        else:
+            self.hide()
+
+    def set_locked(self, locked):
+        """锁 = 穿透；解锁后可拖。"""
+        if locked == self._locked:
+            return
+        self._locked = locked
+        visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, locked)
+        if visible:
+            self.show()                      # 改旗标会隐藏窗口
+        self.update()
+
+    def place(self, pos=None):
+        """pos = [x, y]；没有就摆到主屏底部居中（歌词那个位置）。"""
+        if pos and len(pos) == 2:
+            self.move(int(pos[0]), int(pos[1]))
+            return
+        scr = QGuiApplication.primaryScreen().availableGeometry()
+        self.move(scr.center().x() - self.width() // 2,
+                  scr.bottom() - self.height() - 140)
+
+    # -- painting ----------------------------------------------------------------
+
+    def _fonts(self):
+        """-> (主行字体, 原文行字体)。**两个 QFont 要一直被持有**：PyQt6 的
+        QFontMetrics 没有 ``font()``，取字体只能自己在手边留着传。"""
+        main = QFont()
+        main.setPointSizeF(max(6.0, self._size))
+        main.setBold(True)
+        sub = QFont()
+        sub.setPointSizeF(max(5.0, self._size * self.SRC_SCALE))
+        return main, sub
+
+    def _lines(self, text, font, width):
+        """-> (QTextLayout, [QTextLine])，按宽度排好版。
+
+        两个必须记住的点：
+        * **layout 要跟着 lines 一起活着**——QTextLine 只是 layout 内部数据的视图，layout 一
+          被回收，line 就成了悬空指针（拿它去 measure/draw 会直接崩，而且未必立刻崩）。
+        * **行高取 line.height()，别用 QFontMetrics 的 lineSpacing()**：字体回退时（拿默认拉丁
+          字体渲染日文/中文）实际字形比 metrics 高，照 metrics 的行距往下排会行行重叠。"""
+        layout = QTextLayout(text, font)
+        opt = QTextOption()
+        opt.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        layout.setTextOption(opt)
+        layout.beginLayout()
+        lines = []
+        while True:
+            line = layout.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(width)
+            lines.append(line)
+        layout.endLayout()
+        return layout, lines
+
+    def _relayout(self):
+        main, sub = self._dst or self._src, self._src if self._dst else ""
+        if not self._show_src:
+            sub = ""
+        font_main, font_sub = self._fonts()
+        scr = QGuiApplication.primaryScreen().availableGeometry()
+        maxw = max(200, int(scr.width() * 0.8) - 2 * self.PAD)
+
+        def natural(text, font):        # 不限宽先排一遍，量真实宽度（含字体回退）
+            _lay, lines = self._lines(text, font, 1 << 20)
+            return max((ln.naturalTextWidth() for ln in lines), default=0.0)
+
+        tw = min(int(max(natural(main, font_main), natural(sub, font_sub), 80.0)), maxw)
+        _lay1, main_lines = self._lines(main, font_main, tw)
+        h = sum(ln.height() for ln in main_lines)
+        if sub:
+            _lay2, sub_lines = self._lines(sub, font_sub, tw)
+            h += sum(ln.height() for ln in sub_lines) + self.GAP
+        self.resize(tw + 2 * self.PAD, int(h) + 2 * self.PAD)
+
+    def paintEvent(self, _):
+        main, sub = self._dst or self._src, self._src if (self._dst and self._show_src) else ""
+        font_main, font_sub = self._fonts()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        if self._alpha:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, self._alpha))
+            p.drawRoundedRect(r, self.RADIUS, self.RADIUS)
+        if not self._locked:                 # 解锁提示：现在能拖
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(120, 190, 255, 200), 1, Qt.PenStyle.DashLine))
+            p.drawRoundedRect(r, self.RADIUS, self.RADIUS)
+
+        tw = self.width() - 2 * self.PAD
+        y = float(self.PAD)
+        if sub:
+            p.setPen(QColor(255, 255, 255, 190))
+            sub_lay, sub_lines = self._lines(sub, font_sub, tw)   # 用 line.draw：字体回退也画得对
+            for ln in sub_lines:
+                ln.draw(p, QPointF((self.width() - ln.naturalTextWidth()) / 2.0, y))
+                y += ln.height()
+            y += self.GAP
+        main_lay, main_lines = self._lines(main, font_main, tw)
+        for ln in main_lines:
+            seg = main[ln.textStart():ln.textStart() + ln.textLength()]
+            path = QPainterPath()
+            path.addText(QPointF((self.width() - ln.naturalTextWidth()) / 2.0, y + ln.ascent()),
+                         font_main, seg)
+            p.strokePath(path, QPen(self.OUTLINE, max(1.5, self._size / 7.0)))
+            p.fillPath(path, QColor(255, 255, 255))
+            y += ln.height()
+
+    # -- dragging (only while unlocked) ------------------------------------------
+
+    def mousePressEvent(self, e):
+        if not self._locked and e.button() == Qt.MouseButton.LeftButton:
+            self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None:
+            self.move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag is None:
+            return
+        self._drag = None
+        self.moved.emit(self.x(), self.y())   # 位置交给主窗口落盘
+
+
 # ── settings dialog ──────────────────────────────────────────────────────────────
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, cfg):
+    def __init__(self, parent, cfg, cfg_path=""):
         super().__init__(parent)
         self.setWindowTitle(t("settings_title"))
         form = QFormLayout(self)
@@ -455,6 +746,46 @@ class SettingsDialog(QDialog):
                 break
         form.addRow(t("settings_uilang"), self.cmb_ui)
 
+        self.ed_modeldir = QLineEdit(cfg.get("model_dir", ""))
+        self.ed_modeldir.setPlaceholderText(t("ph_model_dir"))
+        self.ed_modeldir.setToolTip(t("settings_model_dir_tip"))
+        b_browse = QPushButton(t("settings_browse"))
+        b_browse.clicked.connect(self._browse_model_dir)
+        row_model = QHBoxLayout()
+        row_model.addWidget(self.ed_modeldir)
+        row_model.addWidget(b_browse)
+        form.addRow(t("settings_model_dir"), row_model)
+
+        self.cmb_prec = QComboBox()
+        for p in ("f32", "f16"):
+            self.cmb_prec.addItem(p, p)
+        self.cmb_prec.setCurrentIndex(max(0, self.cmb_prec.findData(cfg.get("precision", "f32"))))
+        self.cmb_prec.setToolTip(t("settings_precision_tip"))
+        form.addRow(t("settings_precision"), self.cmb_prec)
+
+        self.chk_ovsrc = QCheckBox(t("settings_overlay"))
+        self.chk_ovsrc.setChecked(bool(cfg.get("overlay_src", True)))
+        form.addRow("", self.chk_ovsrc)
+        self.sp_ovsize = QSpinBox()
+        self.sp_ovsize.setRange(16, 72)
+        self.sp_ovsize.setValue(int(cfg.get("overlay_size") or 28))
+        form.addRow(t("settings_overlay_size"), self.sp_ovsize)
+        self.sp_ovalpha = QSpinBox()
+        self.sp_ovalpha.setRange(0, 255)
+        alpha = cfg.get("overlay_alpha")
+        self.sp_ovalpha.setValue(150 if alpha is None else int(alpha))
+        form.addRow(t("settings_overlay_alpha"), self.sp_ovalpha)
+        self.sp_ovop = QSpinBox()
+        self.sp_ovop.setRange(20, 100)
+        self.sp_ovop.setSuffix(" %")
+        op = cfg.get("overlay_opacity")
+        self.sp_ovop.setValue(100 if op is None else int(op))
+        form.addRow(t("settings_overlay_opacity"), self.sp_ovop)
+        self.chk_ovlock = QCheckBox(t("settings_overlay_lock"))
+        self.chk_ovlock.setChecked(bool(cfg.get("overlay_locked", True)))
+        self.chk_ovlock.setToolTip(t("settings_overlay_lock_tip"))
+        form.addRow("", self.chk_ovlock)
+
         self.ed_base = QLineEdit(cfg.get("api_base", ""))
         self.ed_base.setPlaceholderText(t("ph_base"))
         self.ed_model = QLineEdit(cfg.get("api_model", ""))
@@ -465,6 +796,16 @@ class SettingsDialog(QDialog):
         form.addRow("API base", self.ed_base)
         form.addRow(t("settings_model"), self.ed_model)
         form.addRow("API key", self.ed_key)
+
+        self.ed_cfgpath = QLineEdit(cfg_path)
+        self.ed_cfgpath.setReadOnly(True)
+        self.ed_cfgpath.setToolTip(t("settings_config_tip"))
+        b_cfg = QPushButton(t("btn_open_config"))
+        b_cfg.clicked.connect(lambda: open_config_folder(cfg_path))
+        row_cfg = QHBoxLayout()
+        row_cfg.addWidget(self.ed_cfgpath)
+        row_cfg.addWidget(b_cfg)
+        form.addRow(t("settings_config"), row_cfg)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                               QDialogButtonBox.StandardButton.Cancel)
@@ -482,6 +823,23 @@ class SettingsDialog(QDialog):
         return {"api_base": self.ed_base.text().strip(),
                 "api_model": self.ed_model.text().strip(),
                 "api_key": self.ed_key.text().strip()}
+
+    def model(self):
+        return {"model_dir": self.ed_modeldir.text().strip(),
+                "precision": self.cmb_prec.currentData()}
+
+    def overlay(self):
+        return {"overlay_src": self.chk_ovsrc.isChecked(),
+                "overlay_size": self.sp_ovsize.value(),
+                "overlay_alpha": self.sp_ovalpha.value(),
+                "overlay_opacity": self.sp_ovop.value(),
+                "overlay_locked": self.chk_ovlock.isChecked()}
+
+    def _browse_model_dir(self):
+        start = self.ed_modeldir.text().strip() or os.path.expanduser("~")
+        d = QFileDialog.getExistingDirectory(self, t("settings_model_dir"), start)
+        if d:
+            self.ed_modeldir.setText(d)
 
 
 # ── main window ──────────────────────────────────────────────────────────────────
@@ -503,6 +861,13 @@ class MainWindow(QMainWindow):
         self._worker.error.connect(self._on_error)
         self._worker.start()
         self._worker.set_llm(cfg.get("api_base"), cfg.get("api_model"), cfg.get("api_key"))
+        self._worker.set_model(cfg.get("model_dir", ""), cfg.get("precision", "f32"))
+
+        self._sub = SubtitleOverlay(cfg)          # 歌词式置顶字幕层（穿透，不挡操作）
+        self._sub.moved.connect(self._on_sub_moved)
+        self._sub.set_locked(bool(cfg.get("overlay_locked", True)))
+        self._quitting = False
+        self._tray_hinted = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -525,6 +890,11 @@ class MainWindow(QMainWindow):
         self.cmb_reason.setToolTip(t("reason_tip"))
         self.btn_set = QPushButton(t("btn_settings"))
         self.btn_set.clicked.connect(self.open_settings)
+        self.chk_overlay = QCheckBox(t("chk_overlay"))
+        self.chk_overlay.setToolTip(t("chk_overlay_tip"))
+        self.btn_move = QPushButton(t("btn_move"))
+        self.btn_move.setCheckable(True)
+        self.btn_move.setToolTip(t("btn_move_tip"))
         self.cmb_dir = QComboBox()
         for key, val in [("dir_auto", "auto"), ("dir_h", "h"), ("dir_v", "v")]:
             self.cmb_dir.addItem(t(key), val)
@@ -536,6 +906,8 @@ class MainWindow(QMainWindow):
         top.addWidget(self.cmb)
         top.addWidget(self.cmb_reason)
         top.addWidget(self.btn_set)
+        top.addWidget(self.chk_overlay)
+        top.addWidget(self.btn_move)
         top.addStretch(1)
         lay.addLayout(top)
 
@@ -563,11 +935,19 @@ class MainWindow(QMainWindow):
             if self.cmb_reason.itemData(i) == cfg.get("reasoning"):
                 self.cmb_reason.setCurrentIndex(i)
                 break
+        self.chk_overlay.setChecked(bool(cfg.get("overlay", True)))
+        self._sub.set_visible(self.chk_overlay.isChecked())
+        self.btn_move.setChecked(not bool(cfg.get("overlay_locked", True)))
+
         self.chk_det.toggled.connect(self._persist)
         self.chk.toggled.connect(self._persist)
         self.cmb.currentIndexChanged.connect(self._persist)
         self.cmb_dir.currentIndexChanged.connect(self._persist)
         self.cmb_reason.currentIndexChanged.connect(self._persist)
+        self.chk_overlay.toggled.connect(self._on_overlay_toggled)
+        self.btn_move.toggled.connect(self._on_move_toggled)
+
+        self._setup_tray()
 
         # hotkey: system-wide first, window-scoped fallback
         self._hotkey = GlobalHotkey(QApplication.instance(), self.capture)
@@ -593,6 +973,7 @@ class MainWindow(QMainWindow):
     def capture(self):
         if self._overlay is not None:
             return
+        self._was_visible = self.isVisible()   # 从托盘划词时不弹窗口，结果看字幕
         self.hide()
         QApplication.processEvents()
         time.sleep(0.15)   # let this window actually disappear
@@ -622,8 +1003,9 @@ class MainWindow(QMainWindow):
 
     def _on_picked(self, crop):
         self._overlay = None
-        self.show()
-        self.raise_()
+        if self._was_visible:
+            self.show()
+            self.raise_()
         if crop is None:
             return
         arr = np.asarray(crop.convert("RGB"))
@@ -634,25 +1016,117 @@ class MainWindow(QMainWindow):
 
     def _on_recognized(self, text):
         self.txt.setPlainText(text)     # source shows as soon as OCR finishes
+        self._sub.set_text(text)        # 译文留空 → 原文先顶上，等翻译回来再换
         tail = t("status_translating") if self.chk.isChecked() else ""
         self.statusBar().showMessage(t("status_recognized", n=len(text), tail=tail))
 
     def _on_translated(self, trans):
         self.trans.setPlainText(trans)
+        self._sub.set_text(self.txt.toPlainText(), trans)
         if trans:
             self.statusBar().showMessage(t("status_done", n=len(self.txt.toPlainText())))
 
     def _on_error(self, msg):
         self.statusBar().showMessage(t("status_error") + msg)
 
+    # -- subtitle ------------------------------------------------------------------
+
+    def _on_overlay_toggled(self, on):
+        self._sub.set_visible(on)
+        if not on:
+            self.btn_move.setChecked(False)     # 不显示就无所谓移动
+        self.act_overlay.blockSignals(True)     # 托盘菜单里的勾跟着走
+        self.act_overlay.setChecked(on)
+        self.act_overlay.blockSignals(False)
+        self._persist()
+
+    def _on_move_toggled(self, on):
+        self._sub.set_locked(not on)            # 勾上 = 解锁，可拖
+        self._cfg["overlay_locked"] = not on
+        self._persist()                         # 落盘（连拖动后的位置一起）
+
+    def _on_sub_moved(self, x, y):
+        self._cfg["overlay_pos"] = [x, y]
+        self._persist()
+
+    # -- tray ----------------------------------------------------------------------
+
+    def _tray_icon(self):
+        """托盘/窗口图标：画一个圆角方块 +「译」，省得带图标资源。"""
+        pm = QPixmap(64, 64)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(60, 120, 220))
+        p.drawRoundedRect(QRectF(3, 3, 58, 58), 14, 14)
+        font = QFont()
+        font.setPointSizeF(30)
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(QColor(255, 255, 255))
+        p.drawText(QRectF(0, 0, 64, 64), Qt.AlignmentFlag.AlignCenter, "译")
+        p.end()
+        return QIcon(pm)
+
+    def _setup_tray(self):
+        icon = self._tray_icon()
+        self.setWindowIcon(icon)
+        self.tray = QSystemTrayIcon(icon, self)
+        menu = QMenu(self)
+        for label, slot in ((t("btn_capture"), self.capture),
+                            (t("btn_settings"), self.open_settings)):
+            act = QAction(label, self)
+            act.triggered.connect(slot)
+            menu.addAction(act)
+        self.act_overlay = QAction(t("chk_overlay"), self)
+        self.act_overlay.setCheckable(True)
+        self.act_overlay.setChecked(self.chk_overlay.isChecked())
+        self.act_overlay.toggled.connect(self.chk_overlay.setChecked)
+        menu.addAction(self.act_overlay)
+        menu.addSeparator()
+        quit_act = QAction(t("btn_quit"), self)
+        quit_act.triggered.connect(self._quit)
+        menu.addAction(quit_act)
+        self._tray_menu = menu          # 持有引用，否则菜单会被回收
+        self.tray.setContextMenu(menu)
+        self.tray.setToolTip(t("app_title"))
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger,
+                      QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def _quit(self):
+        """真退出：字幕是**独立顶层窗口**，close 主窗口带不走它；再加上
+        setQuitOnLastWindowClosed(False)，不显式收尾进程会一直挂着。"""
+        self._quitting = True
+        self._sub.close()
+        self.tray.hide()
+        self.close()
+        QApplication.quit()
+
     # -- settings ------------------------------------------------------------------
 
     def open_settings(self):
-        dlg = SettingsDialog(self, self._cfg)
+        dlg = SettingsDialog(self, self._cfg, self._cfg_path)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             llm = dlg.llm()
             self._cfg.update(llm)
             self._worker.set_llm(llm["api_base"], llm["api_model"], llm["api_key"])
+            model = dlg.model()
+            model_changed = (model["model_dir"], model["precision"]) != (
+                self._cfg.get("model_dir", ""), self._cfg.get("precision", "f32"))
+            self._cfg.update(model)
+            self._worker.set_model(model["model_dir"], model["precision"])
+            self._cfg.update(dlg.overlay())
+            self._sub.apply_cfg(self._cfg)
+            self._sub.set_locked(bool(self._cfg.get("overlay_locked", True)))
+            self.btn_move.setChecked(not bool(self._cfg.get("overlay_locked", True)))
             lang_changed = dlg.ui_lang() != self._cfg.get("ui_lang")
             self._cfg["ui_lang"] = dlg.ui_lang()
             spec = dlg.hotkey()
@@ -661,8 +1135,11 @@ class MainWindow(QMainWindow):
             else:
                 self._cfg["hotkey"] = spec
                 self._apply_hotkey(spec)
-                self.statusBar().showMessage(t("status_lang_changed") if lang_changed
-                                             else t("status_settings_saved"))
+                if model_changed:
+                    self.statusBar().showMessage(t("status_model_changed"))
+                else:
+                    self.statusBar().showMessage(t("status_lang_changed") if lang_changed
+                                                 else t("status_settings_saved"))
             self._persist()
         return
 
@@ -672,11 +1149,21 @@ class MainWindow(QMainWindow):
         self._cfg["target"] = self.cmb.currentData()
         self._cfg["orient"] = self.cmb_dir.currentData()
         self._cfg["reasoning"] = self.cmb_reason.currentData()
+        self._cfg["overlay"] = self.chk_overlay.isChecked()
         save_config(self._cfg_path, self._cfg)
 
     def closeEvent(self, e):
+        if not self._quitting:              # 叉叉 = 缩到托盘，不等于退出
+            e.ignore()
+            self.hide()
+            if not self._tray_hinted:
+                self._tray_hinted = True
+                self.tray.showMessage(t("app_title"), t("tray_hint"),
+                                      QSystemTrayIcon.MessageIcon.Information, 3000)
+            return
         self._hotkey.release()
         self._worker.stop()
+        self.tray.hide()
         super().closeEvent(e)
 
 
@@ -689,9 +1176,9 @@ def _pil_to_qimage(img):
 def main(argv=None):
     global _LANG
     ap = argparse.ArgumentParser(description="Screen translator (PP-OCRv6 + LLM)")
-    ap.add_argument("--config", default=os.environ.get(
-        "OCR_TRANSLATOR_CONFIG", os.path.join(ROOT, "data", "ocr", "screen_translator.json")),
-        help="settings file (default: <repo>/data/ocr/screen_translator.json, gitignored)")
+    ap.add_argument("--config", default=resolve_config_path(os.environ.get("OCR_TRANSLATOR_CONFIG")),
+                    help="settings file (default: an existing <repo>/data/ocr/screen_translator.json, "
+                         "else %APPDATA%/screen-translator/config.json)")
     ap.add_argument("--lang", choices=["zh", "en"], help="UI language (overrides config)")
     ap.add_argument("--selftest", action="store_true", help="construct + smoke-test, no GUI loop")
     args = ap.parse_args(argv)
@@ -701,11 +1188,12 @@ def main(argv=None):
     _LANG = args.lang or cfg.get("ui_lang", "zh")
 
     app = QApplication(sys.argv[:1])
+    app.setQuitOnLastWindowClosed(False)   # 叉叉只缩到托盘，退出走托盘菜单
     win = MainWindow(args, cfg, args.config)
 
     if args.selftest:
         from ocr_py.ocr import Ocr   # verifies the sys.path wiring (no model load)
-        dlg = SettingsDialog(win, cfg)   # catch field/import errors without opening it
+        dlg = SettingsDialog(win, cfg, args.config)   # catch field/import errors without opening it
         safe = {k: ("<set>" if k == "api_key" and v else v) for k, v in win._cfg.items()}
         print(f"OK: ocr_py import ok; ui_lang={_LANG}; config={args.config}")
         print(f"    cfg={safe}")   # api_key redacted
