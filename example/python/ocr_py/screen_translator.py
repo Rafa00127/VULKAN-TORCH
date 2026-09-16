@@ -234,6 +234,66 @@ class GlobalHotkey:
 
 # ── OCR + translation worker (one thread, one Ocr instance) ──────────────────────
 
+def _reading_order(boxes):
+    """-> list of visual lines, each a left-to-right list of boxes.
+
+    ``ocr_py`` follows PaddleOCR's SortQuadBoxes verbatim: order by the top-left corner,
+    then only swap boxes whose tops are <10 px apart (a hard pixel threshold, so it does
+    not scale with resolution or font size). An inline code span is a *short* box whose
+    top sits lower than the text around it, so it ends up after the rest of the line.
+    The library stays faithful to the reference; the tool regroups here by how much boxes
+    overlap vertically -- a resolution-independent signal for "same line".
+    """
+    rows = []                                    # [y_top, y_bottom, [boxes]]
+    for b in sorted(boxes, key=lambda b: b[:, 1].min()):
+        y0, y1 = float(b[:, 1].min()), float(b[:, 1].max())
+        for row in rows:
+            if min(row[1], y1) - max(row[0], y0) > 0.5 * min(row[1] - row[0], y1 - y0):
+                row[0], row[1] = min(row[0], y0), max(row[1], y1)
+                row[2].append(b)
+                break
+        else:
+            rows.append([y0, y1, [b]])
+    rows.sort(key=lambda r: r[0])
+    return [sorted(row[2], key=lambda b: b[:, 0].min()) for row in rows]
+
+
+def _row_text(row, texts):
+    """Join one line's pieces: a real visual gap between two boxes means the source had
+    a space there; boxes that abut or overlap are one continuous run (det routinely cuts
+    a CJK line mid-sentence, gap <= 0), so those are concatenated. Threshold is relative
+    to the box height, so it does not depend on resolution or font size."""
+    out = [texts[0]]
+    for prev, cur, t in zip(row, row[1:], texts[1:]):
+        h = min(prev[:, 1].max() - prev[:, 1].min(), cur[:, 1].max() - cur[:, 1].min())
+        gap = float(cur[:, 0].min()) - float(prev[:, 0].max())
+        out.append(" " if gap > 0.2 * h else "")
+        out.append(t)
+    return "".join(out)
+
+
+def read_region(ocr, rgb):
+    """det+rec over a captured region, read in order (see _reading_order)."""
+    from ocr_py import postproc
+    from ocr_py.ocr import det_preprocess, rec_preprocess
+    bgr = np.ascontiguousarray(rgb[:, :, ::-1])
+    det_in, rh, rw = det_preprocess(bgr)
+    boxes = postproc.boxes_from_prob(ocr._run("det", det_in), rh, rw)
+    lines = []
+    for row in _reading_order(boxes):
+        kept, texts = [], []
+        for box in row:
+            crop = postproc.crop_quad(bgr, box)
+            if crop is None:
+                continue
+            ids = ocr._run("rec_ids", rec_preprocess(crop), np.int32)
+            kept.append(box)
+            texts.append(postproc.ctc_decode_ids(ids, ocr.chars))
+        if kept:
+            lines.append(_row_text(kept, texts))
+    return "\n".join(lines)
+
+
 class Worker(QThread):
     recognized = pyqtSignal(str)   # OCR text, emitted immediately
     translated = pyqtSignal(str)   # translation ("" if none) — emitted after
@@ -272,7 +332,9 @@ class Worker(QThread):
                 if self._ocr is None:
                     from ocr_py.ocr import Ocr
                     self._ocr = Ocr()
-                text = self._ocr.read_line(arr, det=det)
+                # det off = one pre-cut line, nothing to order; det on = a region that
+                # may hold several boxes, so read it in reading order
+                text = read_region(self._ocr, arr) if det else self._ocr.read_line(arr)
                 self.recognized.emit(text)          # show source the moment OCR is done
                 trans = ""
                 if do_translate and text.strip():
