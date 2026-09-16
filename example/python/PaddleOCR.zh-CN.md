@@ -12,7 +12,7 @@
 ## `ocr_py/` —— PaddleOCR（PP-OCRv6）跑在 vulkan-torch 上
 
 从零把 PaddleOCR 的 **PP-OCRv6_medium_det / _rec** 移植到 vulkan-torch，
-面向已裁好的单行（默认只做识别）。
+既可以检测也能识别（默认只做识别）。
 
 ```python
 import sys

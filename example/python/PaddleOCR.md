@@ -12,7 +12,7 @@
 ## `ocr_py/` — PaddleOCR (PP-OCRv6) on vulkan-torch
 
 A from-scratch port of PaddleOCR's **PP-OCRv6_medium_det / _rec** to vulkan-torch,
-built for a cropped line (recognition only by default).
+has the ability of both recognition and dectection. (recognition only by default).
 
 ```python
 import sys
