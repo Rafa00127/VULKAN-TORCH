@@ -64,7 +64,7 @@ python build_win.py
 Or use GCC (MinGW/w64devkit) via `build.sh` — same thing, just gcc/ninja:
 
 ```bash
-sh build.sh        # -> build/, emits build/vulkantorch.dll
+sh build.sh        # -> build/
 ```
 
 Produces:

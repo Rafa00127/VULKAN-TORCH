@@ -67,7 +67,7 @@ python build_win.py
 或者用 GCC（MinGW/w64devkit）跑 `build.sh`——同样的东西，只是走 gcc/ninja：
 
 ```bash
-sh build.sh        # -> build/，输出 build/vulkantorch.dll
+sh build.sh        # -> build/
 ```
 
 产出：
