@@ -14,7 +14,10 @@
 #define VT_API
 #endif
 #else
-#define VT_API
+// GCC/Clang default to visible symbols, but say it explicitly: with the usual
+// -fvisibility=hidden for shared libraries the whole C ABI would silently vanish
+// (surfacing only as EntryPointNotFoundException at run time).
+#define VT_API __attribute__((visibility("default")))
 #endif
 
 #ifdef __cplusplus

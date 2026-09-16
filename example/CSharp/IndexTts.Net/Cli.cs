@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using NAudio.Wave;
 using IndexTtsSharp;
 
 namespace IndexTts;
@@ -164,20 +165,92 @@ Example:
     --text ""大家好，这是一个测试。"" --out data\indextts\out.wav");
     }
 
+    /// <summary>Reference audio -> mono float samples.
+    ///
+    /// WAV goes straight to NAudio.Core's managed reader; anything else is piped through
+    /// ffmpeg (must be on PATH) and decoded to WAV in memory -- no temp file. Using
+    /// WaveFileReader instead of AudioFileReader keeps this CLI off the Windows-only
+    /// NAudio metapackage.</summary>
     private static float[] LoadWav(string path, out int sampleRate)
     {
-        using var r = new NAudio.Wave.AudioFileReader(path);
+        using var src = IsRiff(path) ? File.OpenRead(path) : FfmpegWav(path);
+        using var r = new WaveFileReader(src);
+        var sp = r.ToSampleProvider();
         sampleRate = r.WaveFormat.SampleRate;
         int ch = r.WaveFormat.Channels;
         var buf = new List<float>();
         var tmp = new float[4096];
         int n;
-        while ((n = r.Read(tmp, 0, tmp.Length)) > 0)
+        while ((n = sp.Read(tmp, 0, tmp.Length)) > 0)
             for (int i = 0; i < n; i++) buf.Add(tmp[i]);
         var all = buf.ToArray();
         if (ch == 1) return all;
         var mono = new float[all.Length / ch];
         for (int i = 0; i < mono.Length; i++) mono[i] = all[i * ch];
         return mono;
+    }
+
+    /// <summary>Sniff the container, not the extension: "RIFF" at offset 0 = WAV.</summary>
+    private static bool IsRiff(string path)
+    {
+        using var f = File.OpenRead(path);
+        var magic = new byte[4];
+        return f.Read(magic, 0, 4) == 4 && magic[0] == 'R' && magic[1] == 'I'
+            && magic[2] == 'F' && magic[3] == 'F';
+    }
+
+    /// <summary>ffmpeg -i &lt;path&gt; -f wav - : decode to WAV on stdout, buffered in memory
+    /// (WaveFileReader needs to seek). ffmpeg's stderr stays attached to the console.</summary>
+    private static Stream FfmpegWav(string path)
+    {
+        var psi = new ProcessStartInfo("ffmpeg")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        foreach (var a in new[] { "-v", "error", "-i", path, "-f", "wav", "-" })
+            psi.ArgumentList.Add(a);
+        Process p;
+        try
+        {
+            p = Process.Start(psi)!;
+        }
+        catch (Exception e)
+        {
+            throw new InvalidOperationException(
+                $"'{path}' is not a WAV and ffmpeg could not be started: {e.Message}");
+        }
+        var mem = new MemoryStream();
+        p.StandardOutput.BaseStream.CopyTo(mem);
+        p.WaitForExit();
+        if (p.ExitCode != 0)
+            throw new InvalidOperationException($"ffmpeg failed on '{path}' (exit {p.ExitCode})");
+        return new MemoryStream(FixPipedSizes(mem));
+    }
+
+    /// <summary>ffmpeg cannot seek a pipe, so it writes 0xFFFFFFFF placeholders where the
+    /// RIFF chunk and the trailing "data" chunk expect a size. Fill them in from the real
+    /// length, or NAudio's strict RIFF reader rejects the buffer.</summary>
+    private static byte[] FixPipedSizes(MemoryStream ms)
+    {
+        var b = ms.ToArray();
+        void PutU32(int at, long v)
+        {
+            for (int k = 0; k < 4; k++) b[at + k] = (byte)(v >> (8 * k));
+        }
+        PutU32(4, b.Length - 8);
+        for (int i = 12; i + 8 <= b.Length;)
+        {
+            if (b[i] == 'd' && b[i + 1] == 'a' && b[i + 2] == 't' && b[i + 3] == 'a')
+            {
+                PutU32(i + 4, b.Length - i - 8);
+                break;
+            }
+            long sz = BitConverter.ToUInt32(b, i + 4);
+            if (sz == 0xFFFFFFFF || sz > 0x7FFFFF00)
+                break;                                       // cannot walk further safely
+            i += 8 + (int)sz;
+        }
+        return b;
     }
 }

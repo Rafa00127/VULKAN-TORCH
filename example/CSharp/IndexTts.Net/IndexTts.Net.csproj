@@ -13,7 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\IndexTtsSharp\IndexTtsSharp.csproj" />
     <ProjectReference Include="..\..\..\VulkanTorch.Net\VulkanTorch.Net.csproj" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
+    <PackageReference Include="NAudio.Core" Version="2.3.0" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
   </ItemGroup>
 

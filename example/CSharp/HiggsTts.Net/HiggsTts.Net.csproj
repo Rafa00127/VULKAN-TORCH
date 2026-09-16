@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HiggsTtsSharp\HiggsTtsSharp.csproj" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
+    <PackageReference Include="NAudio.Core" Version="2.3.0" />
   </ItemGroup>
 
 </Project>

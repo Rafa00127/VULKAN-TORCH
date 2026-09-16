@@ -6,7 +6,10 @@ namespace VulkanTorch;
 // Raw P/Invoke surface over vulkantorch.dll (the C++ core's C ABI).
 internal static class Native
 {
-    private const string Dll = "vulkantorch.dll";
+    // Extensionless on purpose: .NET then probes vulkantorch.dll / libvulkantorch.so /
+    // libvulkantorch.dylib for the platform. CMake only clears the "lib" prefix on
+    // Windows, so the Unix builds come out as libvulkantorch.so.
+    private const string Dll = "vulkantorch";
 
     /// <summary>Message from the most recent failed call on this thread; "" if none.
     /// Read it immediately after a call returns a failure sentinel.</summary>

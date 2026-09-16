@@ -24,6 +24,12 @@ set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 # Flip to ON if you ever want the ggml DLLs back.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "ggml: build static (linked into vulkantorch)" FORCE)
 
+# Those static archives end up inside a shared object, so they must be position
+# independent: MSVC does not care, but ELF refuses to link non-PIC objects into a .so
+# ("relocation R_X86_64_TPOFF32 ... recompile with -fPIC"). Applies to every target
+# added from here on, ggml's included.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 add_subdirectory(${GGML_SOURCE_DIR} ${CMAKE_BINARY_DIR}/ggml)
 
 # ---------------------------------------------------------------------------

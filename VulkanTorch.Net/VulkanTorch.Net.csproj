@@ -10,13 +10,22 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <!-- The native core (built by build_win.py), declared ONCE here. MSBuild copies
-       items with CopyToOutputDirectory recursively along the ProjectReference graph,
-       so every consumer that references VulkanTorch.Net (directly, or through the
-       model libraries IndexTtsSharp / HiggsTtsSharp) gets vulkantorch.dll in its
-       output. ggml is linked statically into it, so this one file is all we need. -->
+  <!-- Per-OS name: CMake clears the "lib" prefix only on Windows, so the Unix builds
+       come out as libvulkantorch.so / .dylib — which is also what the extensionless
+       DllImport("vulkantorch") probes for. -->
+  <PropertyGroup>
+    <NativeLib Condition="$([MSBuild]::IsOSPlatform('Windows'))">vulkantorch.dll</NativeLib>
+    <NativeLib Condition="$([MSBuild]::IsOSPlatform('OSX'))">libvulkantorch.dylib</NativeLib>
+    <NativeLib Condition="$([MSBuild]::IsOSPlatform('Linux'))">libvulkantorch.so</NativeLib>
+  </PropertyGroup>
+
+  <!-- The native core (built by build_win.py / build.sh), declared ONCE here. MSBuild
+       copies items with CopyToOutputDirectory recursively along the ProjectReference
+       graph, so every consumer that references VulkanTorch.Net (directly, or through
+       the model libraries IndexTtsSharp / HiggsTtsSharp) gets it in its output.
+       ggml is linked statically into it, so this one file is all we need. -->
   <ItemGroup>
-    <None Include="..\build\vulkantorch.dll" Link="vulkantorch.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\build\$(NativeLib)" Link="$(NativeLib)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
