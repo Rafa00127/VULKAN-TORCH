@@ -8,6 +8,7 @@ __pycache__/
 /tool/*
 !/tool/bench_ops.cpp
 移植参考/
+build_local.sh
 
 CLAUDE.md
 # local design notes / investigation logs (same treatment as CLAUDE.md, not shipped)

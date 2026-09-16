@@ -67,7 +67,7 @@ python build_win.py
 或者用 GCC（MinGW/w64devkit）跑 `build.sh`——同样的东西，只是走 gcc/ninja：
 
 ```bash
-sh build.sh        # -> build-gcc/，输出 build-gcc/vulkantorch.dll
+sh build.sh        # -> build/，输出 build/vulkantorch.dll
 ```
 
 产出：
@@ -79,7 +79,7 @@ vulkantorch/_vulkantorch.cp312-win_amd64.pyd   # Python 扩展（直接生在包
 
 没有 pybind11 时 Python 扩展会跳过，`vulkantorch.dll` 照常产出。
 
-> `build.sh` 走 GCC，默认关掉 Python 模块（`BUILD_PYTHON=OFF`），只出 `vulkantorch.dll`；想连 Python 扩展一起编就加 `-DBUILD_PYTHON=ON -Dpybind11_DIR=...`。
+> 两个脚本都编 Python 扩展，但都需要 pybind11：装了（`pip install pybind11`）就编，没装 CMake 只会打一条 WARNING 然后跳过——`vulkantorch.dll` 照常产出。用哪个解释器跑，就编出哪个版本的扩展。
 
 ---
 

@@ -64,7 +64,7 @@ python build_win.py
 Or use GCC (MinGW/w64devkit) via `build.sh` — same thing, just gcc/ninja:
 
 ```bash
-sh build.sh        # -> build-gcc/, emits build-gcc/vulkantorch.dll
+sh build.sh        # -> build/, emits build/vulkantorch.dll
 ```
 
 Produces:
@@ -76,8 +76,10 @@ vulkantorch/_vulkantorch.cp312-win_amd64.pyd   # Python extension (built straigh
 
 Without pybind11 the Python extension is skipped; `vulkantorch.dll` still builds.
 
-> `build.sh` uses GCC and disables the Python module by default (`BUILD_PYTHON=OFF`) — it only
-> emits `vulkantorch.dll`. To build the Python extension too, add `-DBUILD_PYTHON=ON -Dpybind11_DIR=...`.
+> Both scripts build the Python extension, but both need pybind11: with it installed
+> (`pip install pybind11`) the module is built, without it CMake just prints a WARNING and
+> skips it — `vulkantorch.dll` still comes out. Whichever interpreter you run, that's the
+> version the extension is built for.
 
 ---
 
