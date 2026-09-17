@@ -169,7 +169,23 @@ Audio:            5.04 sec
 RTF:             0.233 x
 ```
 
-两个模式：`synth`（默认，参考音频+文本→wav）、`encode`（只跑 `encode_ref`）。参数与 Python 版一一对应，另有 `--no-graph-cache`；`-h` / `--help` 打印全部参数。
+四个模式：`synth`（默认，参考音频+文本→wav）、`encode`（只跑 `encode_ref`）、`decode`（RVQ codes→wav）、`serve`。参数与 Python 版一一对应，另有 `--no-graph-cache`；`-h` / `--help` 打印全部参数。
+
+**流式 HTTP 接口**（`serve`），OpenAI 兼容、边生成边出声：
+
+```bat
+HiggsTts.Net.exe serve --model D:\models\HiggsTTS3-q8_0.gguf --port 8000 ^
+  --ref-wav data\ref_audio\melinaref_24k.wav --ref-text "I have no doubt you will become Elden Lord." ^
+  --voice alice=D:\voices\alice.wav
+
+REM 另一个 shell：
+curl -s http://127.0.0.1:8000/v1/audio/speech -H "Content-Type: application/json" ^
+  -d "{\"input\":\"Hello there.\",\"voice\":\"default\",\"response_format\":\"pcm\"}" -o out.pcm
+```
+
+`POST /v1/audio/speech`
+
+`--voice 名字=<wav>[,<文字稿>]` 注册额外音色
 
 ---
 

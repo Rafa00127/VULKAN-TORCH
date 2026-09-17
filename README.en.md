@@ -170,7 +170,23 @@ Audio:            5.04 sec
 RTF:             0.233 x
 ```
 
-Two modes: `synth` (default, ref audio + text → wav) and `encode` (only `encode_ref`). Args map 1:1 to the Python version, plus `--no-graph-cache`; `-h` / `--help` prints them all.
+Four modes: `synth` (default, ref audio + text → wav), `encode` (only `encode_ref`), `decode` (RVQ codes → wav) and `serve`. Args map 1:1 to the Python version, plus `--no-graph-cache`; `-h` / `--help` prints them all.
+
+**Streaming HTTP endpoint** (`serve`), OpenAI-compatible, audio out as it is generated:
+
+```bat
+HiggsTts.Net.exe serve --model D:\models\HiggsTTS3-q8_0.gguf --port 8000 ^
+  --ref-wav data\ref_audio\melinaref_24k.wav --ref-text "I have no doubt you will become Elden Lord." ^
+  --voice alice=D:\voices\alice.wav
+
+REM another shell:
+curl -s http://127.0.0.1:8000/v1/audio/speech -H "Content-Type: application/json" ^
+  -d "{\"input\":\"Hello there.\",\"voice\":\"default\",\"response_format\":\"pcm\"}" -o out.pcm
+```
+
+`POST /v1/audio/speech`
+
+`--voice name=<wav>[,<transcript>]` registers an extra voice
 
 ---
 

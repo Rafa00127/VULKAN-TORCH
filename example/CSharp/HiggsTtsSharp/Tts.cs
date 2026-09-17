@@ -19,6 +19,17 @@ public sealed class HiggsOptions
     public bool GraphCache { get; set; } = true;
     /// <summary>Optional style tag (e.g. <c>&lt;|style:whispering|&gt;</c>) prepended to the text.</summary>
     public string? StyleTag { get; set; }
+
+    /// <summary>Streaming: frames of context each decode window carries on both sides of
+    /// what it emits. Latency vs. closeness to a one-shot decode — see
+    /// <see cref="DacStream.DefaultLookahead"/>.</summary>
+    public int StreamLookaheadFrames { get; set; } = DacStream.DefaultLookahead;
+    /// <summary>Streaming: frames per emitted chunk. 8 → 320 ms of audio per chunk.</summary>
+    public int StreamStepFrames { get; set; } = 8;
+    /// <summary>Streaming: samples of trailing silence that end the stream early. 0 or
+    /// negative disables the rule (used when comparing against a one-shot decode, which
+    /// has no such cut-off).</summary>
+    public int SilenceStopSamples { get; set; } = 4 * Tts.SampleRate;
 }
 
 /// <summary>
@@ -64,7 +75,11 @@ public sealed class Tts : IDisposable
 
     public bool HasTokenizer => _tok != null;
 
-    /// <summary>Encode reference audio (any sample rate) → a reusable <see cref="ReferenceVoice"/>.</summary>
+    /// <summary>Encode reference audio (any sample rate) → a reusable <see cref="ReferenceVoice"/>.
+    ///
+    /// This is the one part of a request that does not depend on the text, and it is not
+    /// cheap (~125 ms for a 15 s reference), so a server should call <see cref="Warmup"/>
+    /// once per voice at startup instead of letting the first request pay for it.</summary>
     public ReferenceVoice EncodeReference(float[] audio, int sampleRate, string? refText = null)
     {
         var codes = EncodeRef.Run(_rt, _dev, _w, audio, sampleRate);   // int[T, 8]; resamples internally
@@ -93,6 +108,90 @@ public sealed class Tts : IDisposable
     /// <summary>Text + voice → 24 kHz float32 PCM.</summary>
     public float[] Synthesize(string text, ReferenceVoice voice, HiggsOptions? options = null)
         => Decode(GenerateCodes(text, voice, options));
+
+    /// <summary>Same as <see cref="GenerateCodes"/>, but each completed code frame is
+    /// passed to <paramref name="onFrame"/> as soon as the AR produces it. Returning false
+    /// stops generation early (client gone). See <see cref="Ar.GenerateStreaming"/>.</summary>
+    public void GenerateCodesStreaming(string text, ReferenceVoice voice, HiggsOptions? options,
+                                       Func<int[], bool> onFrame)
+    {
+        options ??= new HiggsOptions();
+        if (_tok == null) throw new InvalidOperationException("no tokenizer; call SetTokenizer first");
+        if (!string.IsNullOrEmpty(options.StyleTag)) text = options.StyleTag + text;
+
+        var prompt = BuildPrompt(_tok, text, voice.RefText, voice.Rows + Ar.NCb - 1);
+        Ar.GenerateStreaming(_rt, _dev, _w, prompt, voice.Codes, voice.Rows,
+                             options.Temperature, options.Seed, options.MaxSteps, options.TopK,
+                             options.GraphCache, onFrame);
+    }
+
+    /// <summary>Text + voice → PCM in chunks as it is produced, instead of one array at
+    /// the end. Runs the AR and the DAC on this thread in lockstep (the reference server
+    /// decodes inside its AR callback too) — nothing here is concurrent.
+    ///
+    /// <paramref name="onPcm"/> gets ~<see cref="HiggsOptions.StreamStepFrames"/> frames'
+    /// worth of 24 kHz float PCM per call. Returning false stops generation (client
+    /// disconnected). Generation also stops on its own after roughly four seconds of
+    /// trailing silence, which the AR sometimes produces without ever emitting EOC.
+    ///
+    /// Returns how many frames' audio was actually handed over, and whether the silence
+    /// rule is what ended it.</summary>
+    public (int Frames, bool StoppedForSilence) SynthesizeStreaming(
+        string text, ReferenceVoice voice, HiggsOptions? options,
+        Func<ReadOnlyMemory<float>, bool> onPcm)
+        => SynthesizeStreamingCodes(text, voice, options, null, onPcm);
+
+    /// <summary>As <see cref="SynthesizeStreaming"/>, but also hands every generated code
+    /// frame to <paramref name="onFrame"/> — so a caller can keep the codes that produced
+    /// the audio it just heard, instead of having to reproduce the run.</summary>
+    public (int Frames, bool StoppedForSilence) SynthesizeStreamingCodes(
+        string text, ReferenceVoice voice, HiggsOptions? options,
+        Func<int[], bool>? onFrame, Func<ReadOnlyMemory<float>, bool> onPcm)
+    {
+        var dac = NewStream(options, onPcm);
+        GenerateCodesStreaming(text, voice, options, frame =>
+            (onFrame == null || onFrame(frame)) && dac.Push(frame, onPcm));
+        FinishStream(dac, onPcm);
+        return (dac.DecodedFrames, dac.StoppedForSilence);
+    }
+
+    /// <summary>Decode an already-generated code block in streaming windows rather than
+    /// in one pass. Same audio as <see cref="Decode"/> apart from the decode-window
+    /// boundaries; exists so a fixed code block can be run down both paths and compared
+    /// (<c>decode --codes ... --stream</c>).</summary>
+    public (int Frames, bool StoppedForSilence) DecodeStreaming(
+        int[] codes, HiggsOptions? options, Func<ReadOnlyMemory<float>, bool> onPcm)
+    {
+        var dac = NewStream(options, onPcm);
+        int n = codes.Length / Ar.NCb;
+        for (int t = 0; t < n; t++)
+        {
+            var frame = new int[Ar.NCb];
+            Array.Copy(codes, t * Ar.NCb, frame, 0, Ar.NCb);
+            if (!dac.Push(frame, onPcm)) break;
+        }
+        FinishStream(dac, onPcm);
+        return (dac.DecodedFrames, dac.StoppedForSilence);
+    }
+
+    private DacStream NewStream(HiggsOptions? options,
+                                Func<ReadOnlyMemory<float>, bool> onPcm)
+    {
+        var dac = new DacStream(_rt, _dev, _w);
+        if (options != null)
+        {
+            dac.Lookahead = options.StreamLookaheadFrames;
+            dac.Step = options.StreamStepFrames;
+            dac.SilenceStopSamples = options.SilenceStopSamples;
+        }
+        return dac;
+    }
+
+    private static void FinishStream(DacStream dac, Func<ReadOnlyMemory<float>, bool> onPcm)
+    {
+        // Nothing left to hold silence back for, so a stop here would only drop the tail.
+        if (!dac.StoppedForSilence) dac.Flush(onPcm);
+    }
 
     private static int[] BuildPrompt(HiggsTokenizer tok, string text, string? refText, int numRef)
     {

@@ -274,6 +274,39 @@ public static class Ar
                                  int seed = 42, int maxSteps = 0, int topk = 50,
                                  bool graphCache = true)
     {
+        var raw = RunSteps(rt, dev, w, promptIds, refCodes, refRows, temperature, seed,
+                           maxSteps, topk, graphCache, null);
+        steps = raw.Length / NCb;
+        return raw;
+    }
+
+    /// <summary>Same generation, but each completed frame is handed to
+    /// <paramref name="onFrame"/> the moment all N_CB of its codes exist, instead of
+    /// being collected and reversed at the end. Frame <c>t</c> completes at step
+    /// <c>t + N_CB - 1</c> (the delay pattern), so the first callback lands N_CB steps
+    /// in; the tail N_CB steps after the last one emit nothing. Returning false stops
+    /// generation there — the client-disconnected / trailing-silence exit, a normal stop
+    /// and not an error. Mirrors the reference C++ (higgs_BAR.cpp: `t = all_codes.size() - N`).</summary>
+    public static void GenerateStreaming(Runtime rt, Device dev, HiggsWeights w, int[] promptIds,
+                                         int[] refCodes, int refRows, float temperature, int seed,
+                                         int maxSteps, int topk, bool graphCache,
+                                         Func<int[], bool> onFrame)
+        => RunSteps(rt, dev, w, promptIds, refCodes, refRows, temperature, seed,
+                    maxSteps, topk, graphCache, onFrame);
+
+    /// <summary>Wall time of the prefill in the most recent generation (introspection:
+    /// prefill is the one part of a request that cannot be prepared ahead of the text).</summary>
+    public static double LastPrefillMs { get; private set; }
+
+    /// <summary>The generation loop itself. <paramref name="onFrame"/> is called once per
+    /// completed frame; returning false stops it. The return value is the raw (delay-pattern
+    /// reversed) code block — which, when <paramref name="onFrame"/> is null, is the whole
+    /// point of the call.</summary>
+    private static int[] RunSteps(Runtime rt, Device dev, HiggsWeights w, int[] promptIds,
+                                  int[] refCodes, int refRows, float temperature, int seed,
+                                  int maxSteps, int topk, bool graphCache,
+                                  Func<int[], bool>? onFrame)
+    {
         var delayed = ApplyDelayPattern(refCodes, refRows);
         int la = delayed.Length / NCb;
         int l = promptIds.Length;
@@ -291,11 +324,12 @@ public static class Ar
         using var kv = new KvCache(dev, NLayers, NKV, HD, maxCtx);
         var rng = new Random(seed);
 
+        var swPrefill = System.Diagnostics.Stopwatch.StartNew();
         var lg = PrefillLogits(rt, dev, w, kv, promptIds, delayed, la);
+        LastPrefillMs = swPrefill.Elapsed.TotalMilliseconds;
         int nPast = l;
         var all = new List<int>(maxSteps * NCb);
         int delayCount = 0, eocCountdown = -1;
-        steps = 0;
         using var replay = graphCache
             ? new BucketedReplay<StepInputs>(lk => BuildStep(rt, dev, w, kv, lk))
             : null;
@@ -313,7 +347,16 @@ public static class Ar
             else if (cn[0] == Eoc) eocCountdown = NCb - 2;
 
             all.AddRange(cn);
-            steps++;
+            // Frame t is complete once all N_CB codes of its diagonal exist, i.e. once
+            // the delayed block holds N_CB whole steps; hand it out before the EOC break
+            // so the final frame is not dropped.
+            if (onFrame != null && all.Count >= NCb * NCb)
+            {
+                var frame = new int[NCb];
+                int t = all.Count / NCb - NCb;
+                for (int c = 0; c < NCb; c++) frame[c] = all[(t + c) * NCb + c];
+                if (!onFrame(frame)) break;
+            }
             if (eocCountdown == 0) break;
 
             if (replay != null)
@@ -333,7 +376,7 @@ public static class Ar
             }
             nPast++;
         }
-        return ReverseDelayPattern(all.ToArray(), steps);
+        return ReverseDelayPattern(all.ToArray(), all.Count / NCb);
     }
 
     /// <summary>Per-step inputs of the captured decode graph; refreshed via
