@@ -52,6 +52,23 @@ all have defaults, so the minimal call is `--model` plus one `--text`. Where the
 The sampling flags `--temperature` (0.9) / `--topk` (50) / `--seed` (42) / `--max-steps`
 (0 = predict from text length) and `--no-graph-cache` are the same on both sides.
 
+**Streaming HTTP endpoint** (C#'s `serve` mode), OpenAI-compatible, audio out as it is generated:
+
+```bat
+example\CSharp\HiggsTts.Net\bin\Release\net10.0\HiggsTts.Net.exe serve ^
+  --model D:\models\HiggsTTS3-q8_0.gguf --port 8000 ^
+  --ref-wav data\ref_audio\melinaref_24k.wav --ref-text "I have no doubt you will become Elden Lord." ^
+  --voice alice=D:\voices\alice.wav
+
+REM another shell:
+curl -s http://127.0.0.1:8000/v1/audio/speech -H "Content-Type: application/json" ^
+  -d "{\"input\":\"Hello there.\",\"voice\":\"default\",\"response_format\":\"pcm\"}" -o out.pcm
+```
+
+`POST /v1/audio/speech`
+
+`--voice name=<wav>[,<transcript>]` registers an extra voice
+
 ---
 
 ## Pipeline

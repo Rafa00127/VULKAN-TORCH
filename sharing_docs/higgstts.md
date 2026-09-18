@@ -51,6 +51,23 @@ example\CSharp\HiggsTts.Net\bin\Release\net10.0\HiggsTts.Net.exe synth ^
 采样参数 `--temperature`（0.9）/ `--topk`（50）/ `--seed`（42）/ `--max-steps`（0 = 按文本长度自动）
 和 `--no-graph-cache` 两边同名同义。
 
+**流式 HTTP 接口**（C# 的 `serve` 模式），OpenAI 兼容、边生成边出声：
+
+```bat
+example\CSharp\HiggsTts.Net\bin\Release\net10.0\HiggsTts.Net.exe serve ^
+  --model D:\models\HiggsTTS3-q8_0.gguf --port 8000 ^
+  --ref-wav data\ref_audio\melinaref_24k.wav --ref-text "I have no doubt you will become Elden Lord." ^
+  --voice alice=D:\voices\alice.wav
+
+REM 另一个 shell：
+curl -s http://127.0.0.1:8000/v1/audio/speech -H "Content-Type: application/json" ^
+  -d "{\"input\":\"Hello there.\",\"voice\":\"default\",\"response_format\":\"pcm\"}" -o out.pcm
+```
+
+`POST /v1/audio/speech`
+
+`--voice 名字=<wav>[,<文字稿>]` 注册额外音色
+
 ---
 
 ## 链路
