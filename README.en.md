@@ -177,6 +177,8 @@ Four modes: `synth` (default, ref audio + text → wav), `encode` (only `encode_
 ## Three-Language Speed Comparison
 Benchmarks in [bench/](bench/).
 
+(The GPU I used for this test is a 7900 xtx.)
+
 C# and Python use the same C++ core; only the binding layer differs.
 
 TL;DR: "they're all about the same."
