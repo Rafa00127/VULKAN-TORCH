@@ -50,6 +50,12 @@ PYBIND11_MODULE(_vulkantorch, m) {
         .def_property_readonly("shape", &Tensor::shape)
         .def_property_readonly("numel", &Tensor::numel)
         .def_property_readonly("dim", &Tensor::dim)
+        // A plain int, the same one vt.F32 / vt.F16 / vt.I32 are, so it compares
+        // directly. Unlike the rest of the torch-style surface (vulkantorch/methods.py)
+        // this cannot be monkeypatched from Python: nothing bound exposes the ggml type.
+        .def_property_readonly(
+            "dtype", [](const Tensor& t) { return static_cast<int>(t.dtype()); },
+            "ggml type of this tensor (compare against vt.F32 / vt.F16 / vt.I32).")
         .def("to_host", &Tensor::to_host)
         .def("to_bytes", [](const Tensor& t) { return py::bytes(t.to_host_bytes()); })
         .def("mark_output", &Tensor::mark_output)

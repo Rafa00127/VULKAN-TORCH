@@ -6,3 +6,5 @@ self-contained: ggml (base + CPU + Vulkan) is linked statically into it, so
 """
 
 from vulkantorch._vulkantorch import *  # noqa: F401,F403
+from vulkantorch.factory import *  # noqa: F401,F403
+import vulkantorch.methods  # noqa: F401  (patches Tensor/Graph in place; exports nothing)

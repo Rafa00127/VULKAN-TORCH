@@ -38,16 +38,28 @@ static ggml_backend_dev_t pick_gpu() {
     return first;
 }
 
+// The scheduler references the backends, so it must go first.
+BackendState::~BackendState() {
+    if (sched != nullptr) ggml_backend_sched_free(sched);
+    if (backend_cpu != nullptr) ggml_backend_free(backend_cpu);
+    if (backend != nullptr) ggml_backend_free(backend);
+}
+
 Runtime::Runtime() {
     ggml_backend_load_all();
+
+    // Built into a local first: if we throw part-way, the shared_ptr unwinds and
+    // frees whatever was already created (a throwing constructor never runs its own
+    // destructor, so the old in-place version leaked the backend on failure).
+    auto state = std::make_shared<BackendState>();
 
     ggml_backend_dev_t gpu = pick_gpu();
     if (gpu == nullptr) {
         throw std::runtime_error("Runtime: no GPU backend available (is ggml-vulkan built?)");
     }
 
-    backend_ = ggml_backend_dev_init(gpu, nullptr);
-    if (backend_ == nullptr) {
+    state->backend = ggml_backend_dev_init(gpu, nullptr);
+    if (state->backend == nullptr) {
         throw std::runtime_error("Runtime: ggml_backend_dev_init failed");
     }
     name_ = std::string(ggml_backend_dev_name(gpu)) + ": " +
@@ -56,25 +68,21 @@ Runtime::Runtime() {
     // CPU backend as a fallback for ops the GPU backend does not implement.
     ggml_backend_t backends[2];
     int n = 0;
-    backends[n++] = backend_;
+    backends[n++] = state->backend;
     const bool gpu_only = std::getenv("MINITORCH_GPU_ONLY") != nullptr;
     ggml_backend_dev_t cpu = gpu_only ? nullptr : ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
     if (cpu != nullptr) {
-        backend_cpu_ = ggml_backend_dev_init(cpu, nullptr);
-        if (backend_cpu_ != nullptr) backends[n++] = backend_cpu_;
+        state->backend_cpu = ggml_backend_dev_init(cpu, nullptr);
+        if (state->backend_cpu != nullptr) backends[n++] = state->backend_cpu;
     }
 
-    sched_ = ggml_backend_sched_new(backends, nullptr, n, /*graph_size=*/16384,
-                                    /*parallel=*/false, /*op_offload=*/true);
-    if (sched_ == nullptr) {
+    state->sched = ggml_backend_sched_new(backends, nullptr, n, /*graph_size=*/16384,
+                                          /*parallel=*/false, /*op_offload=*/true);
+    if (state->sched == nullptr) {
         throw std::runtime_error("Runtime: ggml_backend_sched_new failed");
     }
-}
 
-Runtime::~Runtime() {
-    if (sched_ != nullptr) ggml_backend_sched_free(sched_);
-    if (backend_cpu_ != nullptr) ggml_backend_free(backend_cpu_);
-    if (backend_ != nullptr) ggml_backend_free(backend_);
+    state_ = std::move(state);
 }
 
 // Look the capability up through the backend registry rather than linking the

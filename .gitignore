@@ -13,6 +13,7 @@ build_local.sh
 CLAUDE.md
 # local design notes / investigation logs (same treatment as CLAUDE.md, not shipped)
 docs/
+.CLAUDE/
 
 # python extension emitted into the package
 vulkantorch/_vulkantorch*.pyd
