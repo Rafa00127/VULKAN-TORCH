@@ -43,7 +43,13 @@ python tools/vl_compare.py <图> -t ocr --model ... --mmproj ...   # 打印两�
 
 ### 权重
 
-两个文件都要（语言模型 + 视觉塔），默认找 `<repo>/model/paddleocrvl/`。指到别处：
+从 **[PaddlePaddle/PaddleOCR-VL-1.6-GGUF](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/tree/main)**
+下载**两个**文件（语言模型 + 视觉塔）：
+
+- **`PaddleOCR-VL-1.6-GGUF.gguf`** —— ERNIE-4.5-0.3B + 词表
+- **`PaddleOCR-VL-1.6-GGUF-mmproj.gguf`** —— SigLIP 视觉塔 + 投影头
+
+默认找 `<repo>/model/paddleocrvl/`。指到别处：
 
 ```bash
 python example/python/paddleocrvl_vt/cli.py page.png --model D:/m/vl.gguf --mmproj D:/m/vl-mm.gguf

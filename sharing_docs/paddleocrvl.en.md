@@ -47,8 +47,13 @@ python tools/vl_compare.py <image> -t ocr --model ... --mmproj ...   # token cou
 
 ### Weights
 
-Both files are needed (language model + vision tower); the default directory is
-`<repo>/model/paddleocrvl/`. To point elsewhere:
+Download **both** files (language model + vision tower) from
+**[PaddlePaddle/PaddleOCR-VL-1.6-GGUF](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/tree/main)**:
+
+- **`PaddleOCR-VL-1.6-GGUF.gguf`** — ERNIE-4.5-0.3B plus the vocabulary
+- **`PaddleOCR-VL-1.6-GGUF-mmproj.gguf`** — the SigLIP tower and projector
+
+The default directory is `<repo>/model/paddleocrvl/`. To point elsewhere:
 
 ```bash
 python example/python/paddleocrvl_vt/cli.py page.png --model D:/m/vl.gguf --mmproj D:/m/vl-mm.gguf

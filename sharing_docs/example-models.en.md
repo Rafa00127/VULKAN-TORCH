@@ -71,6 +71,7 @@ input size it matches — or even outspeeds — PyTorch (ROCm) a tiny little bit
 ## PaddleOCR-VL 1.6
 
 > - **Details** — **[paddleocrvl.en.md](paddleocrvl.en.md)**
+> - **Weights** — [PaddlePaddle/PaddleOCR-VL-1.6-GGUF](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/tree/main) (model + mmproj)
 > - **Upstream** — [PaddlePaddle/PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL)
 
 A 0.3B **vision-language model** (ERNIE-4.5-0.3B plus a modified SigLIP tower), Python-only

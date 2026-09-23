@@ -64,6 +64,7 @@ PaddleOCR 的 **PP-OCRv6_medium_det / _rec** 移植，只做了 Python 端
 ## PaddleOCR-VL 1.6
 
 > - **详细文档** —— **[paddleocrvl.md](paddleocrvl.md)**
+> - **权重** —— [PaddlePaddle/PaddleOCR-VL-1.6-GGUF](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/tree/main)（主模型 + mmproj）
 > - **上游** —— [PaddlePaddle/PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL)
 
 0.3B 的**视觉语言模型**（ERNIE-4.5-0.3B + 改过的 SigLIP 视觉塔），Python 端
