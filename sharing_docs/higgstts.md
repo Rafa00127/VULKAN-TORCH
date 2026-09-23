@@ -7,7 +7,7 @@
 
 | | 模型代码 | 可执行入口 |
 |---|---|---|
-| **Python** | [`python/higgstts_py/`](../example/python/higgstts_py/)：`model.py` / `ar.py` / `decode.py` / `tts.py` | `cli.py` |
+| **Python** | [`python/higgstts_vt/`](../example/python/higgstts_vt/)：`model.py` / `ar.py` / `decode.py` / `tts.py` | `cli.py` |
 | **C#** | [`CSharp/HiggsTtsSharp/`](../example/CSharp/HiggsTtsSharp/)：`EncodeRef.cs` / `Ar.cs` / `DacDecoder.cs` / `HiggsTokenizer.cs` / `Resampler.cs` | [`example/CSharp/HiggsTts.Net/`](../example/CSharp/HiggsTts.Net/)（`Cli.cs`） |
 
 两份都自包含（C# 自带分词器和重采样器，不需要 Python 侧导出任何东西），互不依赖。
@@ -19,10 +19,10 @@
 两边都是 **`--model` 必填**，其余参数同名、含义一致（完整参数表在根 [README](../README.md)，
 加 `-h` 也能看）。
 
-**Python** —— [`cli.py`](../example/python/higgstts_py/cli.py)：
+**Python** —— [`cli.py`](../example/python/higgstts_vt/cli.py)：
 
 ```bat
-python example\python\higgstts_py\cli.py ^
+python example\python\higgstts_vt\cli.py ^
   --model path\to\HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"

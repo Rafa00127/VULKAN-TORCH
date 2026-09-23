@@ -7,7 +7,7 @@ using VulkanTorch;
 
 namespace HiggsTtsSharp;
 
-/// <summary>Synthesis options (mirror the HiggsTTS CLI / higgstts_py defaults).</summary>
+/// <summary>Synthesis options (mirror the HiggsTTS CLI / higgstts_vt defaults).</summary>
 public sealed class HiggsOptions
 {
     public float Temperature { get; set; } = 0.9f;
@@ -41,7 +41,7 @@ public sealed class Tts : IDisposable
 {
     public const int SampleRate = 24000;
 
-    // prompt special token ids (from higgs_tts.h / higgstts_py/tts.py)
+    // prompt special token ids (from higgs_tts.h / higgstts_vt/tts.py)
     private const int TokTts = 151667, TokRefText = 151680, TokRefAudio = 151679;
     private const int TokText = 151672, TokAudio = 151670, AudioPlaceholder = -100;
 

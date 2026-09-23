@@ -6,7 +6,7 @@ namespace HiggsTts;
 
 /// <summary>
 /// Loads a subset of the HiggsTTS GGUF into device-resident Memory, keyed by name.
-/// Mirrors higgstts_py/weights.py: only tensors whose name starts with one of the
+/// Mirrors higgstts_vt/weights.py: only tensors whose name starts with one of the
 /// given prefixes are copied, so each stage only pays for what it uses.
 /// </summary>
 public sealed class HiggsWeights : IDisposable

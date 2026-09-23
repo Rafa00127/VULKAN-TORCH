@@ -294,6 +294,23 @@ void* vt_rope(void* a, void* pos, int n_dims, int mode, int n_ctx_orig, float fb
         },
         nullptr);
 }
+void* vt_rope_multi(void* a, void* pos, int n_dims, int s0, int s1, int s2, int s3, int mode,
+                    int n_ctx_orig, float fb, float fs, float ef, float af, float bf, float bs) {
+    // built outside VT_TRY_VOID: a braced initialiser's commas would split the macro's
+    // arguments (the preprocessor groups on parentheses only).
+    int sec[4];
+    sec[0] = s0;
+    sec[1] = s1;
+    sec[2] = s2;
+    sec[3] = s3;
+    VT_TRY_VOID(
+        {
+            Tensor p = pos != nullptr ? wrap(pos) : Tensor();
+            return unwrap(rope_multi(wrap(a), p, n_dims, sec, mode, n_ctx_orig, fb, fs, ef, af, bf,
+                                     bs));
+        },
+        nullptr);
+}
 void* vt_flash_attn(void* q, void* k, void* v, void* mask, float scale, float mb, float ls) {
     VT_TRY_VOID(
         {

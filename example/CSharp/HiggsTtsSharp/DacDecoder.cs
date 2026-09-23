@@ -2,7 +2,7 @@ using VulkanTorch;
 
 namespace HiggsTts;
 
-/// <summary>Port of higgstts_py/decode.py — RVQ codes [T,8] -> 24 kHz PCM.</summary>
+/// <summary>Port of higgstts_vt/decode.py — RVQ codes [T,8] -> 24 kHz PCM.</summary>
 public static class DacDecoder
 {
     private static readonly (int S, int Kt)[] Blocks =

@@ -1,4 +1,4 @@
-"""Repo/data paths for ocr_py.
+"""Repo/data paths for ocr_vt.
 
 Weights live in ``<repo>/model/ppocrv6/gguf/`` by default, but every path can be
 overridden so the library works when the models are downloaded elsewhere:

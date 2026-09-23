@@ -4,15 +4,15 @@
 
 A from-scratch port of [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)'s
 **PP-OCRv6_medium_det / _rec** to [vulkan-torch](../README.en.md), code in
-[`example/python/ocr_py/`](../example/python/ocr_py/),
+[`example/python/ocr_vt/`](../example/python/ocr_vt/),
 with the ability of both recognition and detection (recognition only by default).
 
 The whole set of ported models: [example-models.en.md](example-models.en.md).
 
 ```python
 import sys
-sys.path[:0] = ["<repo>", "<repo>/example/python"]   # vulkantorch, then ocr_py
-from ocr_py.ocr import Ocr
+sys.path[:0] = ["<repo>", "<repo>/example/python"]   # vulkantorch, then ocr_vt
+from ocr_vt.ocr import Ocr
 
 ocr = Ocr()
 text = ocr.read_line(rgb)                 # one cropped line  -> text (rec-only)
@@ -86,7 +86,7 @@ just the rec GGUF + dict (det loads lazily on the first `det=True`).
 ### Files
 
 ```
-ocr_py/
+ocr_vt/
   ocr.py        Ocr API (read_line) + det/rec preprocess
   rec.py        LCNetV4 + EncoderWithLightSVTR + CTC head
   det.py        LCNetV4 + RepLKFPN neck + DB head
@@ -94,13 +94,13 @@ ocr_py/
   postproc.py   DB box postprocess + CTC decode
   weights.py    GGUF -> device tensors
   nn.py         op helpers (conv+BN-fold bias, hardsigmoid, layer_norm, pools)
-  cli.py        python example/python/ocr_py/cli.py --line line.png
+  cli.py        python example/python/ocr_vt/cli.py --line line.png
   screen_translator.py  PyQt6 screen 划词翻译 tool: drag a box over on-screen text -> OCR -> (optional) LLM translate
 ```
 
 ### Screen translator tool
 
-[`screen_translator.py`](../example/python/ocr_py/screen_translator.py) is a small PyQt6 desktop app built on the
+[`screen_translator.py`](../example/python/ocr_vt/screen_translator.py) is a small PyQt6 desktop app built on the
 port: hit the hotkey (default `Ctrl+Alt+Shift+O`, customizable) or click the button, drag a box
 over any on-screen text, and it OCRs the box (rec-only, or det+rec for multi-line) and — if 翻译
 is ticked — translates it via an OpenAI-compatible LLM endpoint (base/model/key in the config).
@@ -108,7 +108,7 @@ Handles vertical (manga) text automatically (rotates tall boxes 90°). UI langua
 switched (中文/English) and the choice is saved.
 
 ```bat
-python example\python\ocr_py\screen_translator.py
+python example\python\ocr_vt\screen_translator.py
 ```
 
 Settings (hotkey, LLM endpoint, UI language, …) live in `data/ocr/screen_translator.json`

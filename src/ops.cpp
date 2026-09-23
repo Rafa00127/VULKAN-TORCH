@@ -373,6 +373,20 @@ Tensor rope(const Tensor& a, const Tensor& pos, int n_dims, int mode, int n_ctx_
     return Tensor(r, &g);
 }
 
+Tensor rope_multi(const Tensor& a, const Tensor& pos, int n_dims, const int sections[4], int mode,
+                  int n_ctx_orig, float freq_base, float freq_scale, float ext_factor,
+                  float attn_factor, float beta_fast, float beta_slow) {
+    Graph& g = cur();
+    ggml_tensor* p = pos.defined() ? pos.raw() : nullptr;
+    int sec[GGML_MROPE_SECTIONS];
+    for (int i = 0; i < GGML_MROPE_SECTIONS; ++i) sec[i] = sections[i];
+    ggml_tensor* r = ggml_rope_multi(g.ctx(), a.raw(), p, nullptr, n_dims, sec, mode, n_ctx_orig,
+                                     freq_base, freq_scale, ext_factor, attn_factor, beta_fast,
+                                     beta_slow);
+    g.add(r);
+    return Tensor(r, &g);
+}
+
 Tensor flash_attn(const Tensor& q, const Tensor& k, const Tensor& v, const Tensor& mask,
                   float scale, float max_bias, float logit_softcap) {
     Graph& g = cur();

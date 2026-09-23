@@ -4,7 +4,7 @@ using VulkanTorch;
 
 namespace HiggsTts;
 
-/// <summary>Port of higgstts_py/ar.py — Qwen3 backbone, KV cache, fused head, sampling.</summary>
+/// <summary>Port of higgstts_vt/ar.py — Qwen3 backbone, KV cache, fused head, sampling.</summary>
 public static class Ar
 {
     public const int D = 2560;

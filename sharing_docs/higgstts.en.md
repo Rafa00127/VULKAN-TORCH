@@ -7,7 +7,7 @@ A port of [HiggsTTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) (a 4B
 
 | | Model code | Runnable entry point |
 |---|---|---|
-| **Python** | [`python/higgstts_py/`](../example/python/higgstts_py/): `model.py` / `ar.py` / `decode.py` / `tts.py` | `cli.py` |
+| **Python** | [`python/higgstts_vt/`](../example/python/higgstts_vt/): `model.py` / `ar.py` / `decode.py` / `tts.py` | `cli.py` |
 | **C#** | [`CSharp/HiggsTtsSharp/`](../example/CSharp/HiggsTtsSharp/): `EncodeRef.cs` / `Ar.cs` / `DacDecoder.cs` / `HiggsTokenizer.cs` / `Resampler.cs` | [`example/CSharp/HiggsTts.Net/`](../example/CSharp/HiggsTts.Net/) (`Cli.cs`) |
 
 Both are self-contained (the C# side ships its own tokenizer and resampler — no Python-side
@@ -20,10 +20,10 @@ export needed) and independent of each other.
 Both need **`--model`**, and every other flag has the same name and meaning on both sides (the
 full argument table is in the root [README](../README.en.md); `-h` prints it too).
 
-**Python** — [`cli.py`](../example/python/higgstts_py/cli.py):
+**Python** — [`cli.py`](../example/python/higgstts_vt/cli.py):
 
 ```bat
-python example\python\higgstts_py\cli.py ^
+python example\python\higgstts_vt\cli.py ^
   --model path\to\HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --text "<|style:whispering|>Hello how you doing? Are you having fun these days?"

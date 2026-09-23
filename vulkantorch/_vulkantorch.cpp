@@ -186,6 +186,25 @@ PYBIND11_MODULE(_vulkantorch, m) {
           py::arg("n_ctx_orig"), py::arg("freq_base"), py::arg("freq_scale"), py::arg("ext_factor"),
           py::arg("attn_factor"), py::arg("beta_fast"), py::arg("beta_slow"));
     m.def(
+        "rope_multi",
+        [](const Tensor& a, py::object pos, int n_dims, const std::vector<int>& sections, int mode,
+           int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor,
+           float beta_fast, float beta_slow) {
+            if (sections.size() != 4)
+                throw std::runtime_error("rope_multi: sections must have exactly 4 entries");
+            const int sec[4] = {sections[0], sections[1], sections[2], sections[3]};
+            Tensor p;
+            if (!pos.is_none()) p = pos.cast<Tensor>();
+            return rope_multi(a, p, n_dims, sec, mode, n_ctx_orig, freq_base, freq_scale,
+                              ext_factor, attn_factor, beta_fast, beta_slow);
+        },
+        py::arg("a"), py::arg("pos"), py::arg("n_dims"), py::arg("sections"), py::arg("mode"),
+        py::arg("n_ctx_orig"), py::arg("freq_base"), py::arg("freq_scale") = 1.0f,
+        py::arg("ext_factor") = 0.0f, py::arg("attn_factor") = 1.0f, py::arg("beta_fast") = 32.0f,
+        py::arg("beta_slow") = 1.0f,
+        "Multi-section RoPE (ggml_rope_multi). `sections` is a 4-element list partitioning the "
+        "first n_dims/2 frequencies; mode 8 = MROPE, 24 = VISION.");
+    m.def(
         "flash_attn",
         [](const Tensor& q, const Tensor& k, const Tensor& v, py::object mask, float scale,
            float max_bias, float logit_softcap) {

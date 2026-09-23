@@ -1,7 +1,7 @@
 """CLI: recognition (or det+rec) on a single already-cropped line image.
 
-    python example/python/ocr_py/cli.py --line line.png
-    python example/python/ocr_py/cli.py --line region.png --det
+    python example/python/ocr_vt/cli.py --line line.png
+    python example/python/ocr_vt/cli.py --line region.png --det
 
 Page segmentation is app-specific and lives with the caller, not in this
 library: the caller hands this entry point its line crops.
@@ -13,12 +13,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 sys.path.insert(0, ROOT)                                     # vulkantorch (repo root)
-sys.path.insert(0, os.path.join(ROOT, "example", "python"))  # ocr_py
+sys.path.insert(0, os.path.join(ROOT, "example", "python"))  # ocr_vt
 
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from ocr_py.ocr import Ocr  # noqa: E402
+from ocr_vt.ocr import Ocr  # noqa: E402
 
 
 def main():

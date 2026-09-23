@@ -131,6 +131,10 @@ VT_API void* vt_permute_pt(void* a, int p0, int p1, int p2, int p3);
 VT_API void* vt_rope(void* a, void* pos, int n_dims, int mode, int n_ctx_orig, float freq_base,
                      float freq_scale, float ext_factor, float attn_factor, float beta_fast,
                      float beta_slow);
+// pos may be NULL. `sections` are 4 ints (see ggml_rope_multi); mode 8 = MROPE, 24 = VISION.
+VT_API void* vt_rope_multi(void* a, void* pos, int n_dims, int s0, int s1, int s2, int s3,
+                           int mode, int n_ctx_orig, float freq_base, float freq_scale,
+                           float ext_factor, float attn_factor, float beta_fast, float beta_slow);
 VT_API void* vt_flash_attn(void* q, void* k, void* v, void* mask, float scale, float max_bias,
                            float logit_softcap);  // mask may be NULL
 VT_API void* vt_conv1d(void* x, void* w, int stride, int pad, int dilation);

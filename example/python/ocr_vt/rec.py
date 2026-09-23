@@ -6,8 +6,8 @@ Output    : softmax logits [T, 18710]  (T = W/8), CTC-decoded over the char dict
 """
 import vulkantorch as mt
 
-from ocr_py import backbone
-from ocr_py import nn as N
+from ocr_vt import backbone
+from ocr_vt import nn as N
 
 HIDDEN, NHEAD, DEPTH, EPS = 192, 8, 2, 1e-6
 HEAD_DIM = HIDDEN // NHEAD

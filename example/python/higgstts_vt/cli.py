@@ -2,7 +2,7 @@
 
     reference wav + text -> wav   (encode_ref + AR + DAC decode)
 
-    python example/python/higgstts_py/cli.py \
+    python example/python/higgstts_vt/cli.py \
         --ref-wav ref_24k.wav --ref-text "..." --text "..." --out out.wav
 
 Defaults: ``--ref-wav`` = data/ref_audio/melinaref_24k.wav, ``--out`` under
@@ -20,9 +20,9 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # example/python
 
-from higgstts_py import _paths  # noqa: E402  (runs setup: repo root + native DLL dirs)
-from higgstts_py import ar as AR  # noqa: E402
-from higgstts_py.tts import HiggsTTS  # noqa: E402
+from higgstts_vt import _paths  # noqa: E402  (runs setup: repo root + native DLL dirs)
+from higgstts_vt import ar as AR  # noqa: E402
+from higgstts_vt.tts import HiggsTTS  # noqa: E402
 
 SR = 24000
 

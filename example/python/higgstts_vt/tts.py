@@ -12,11 +12,11 @@ import numpy as np
 
 import vulkantorch as mt
 
-from higgstts_py import _paths
-from higgstts_py import ar as AR
-from higgstts_py import decode as DE
-from higgstts_py import model as M
-from higgstts_py.weights import HiggsWeights
+from higgstts_vt import _paths
+from higgstts_vt import ar as AR
+from higgstts_vt import decode as DE
+from higgstts_vt import model as M
+from higgstts_vt.weights import HiggsWeights
 
 # ships with the repo (data/ref_audio/); pass tokenizer_json= to override
 _TOKENIZER_JSON = _paths.REF_TOKENIZER

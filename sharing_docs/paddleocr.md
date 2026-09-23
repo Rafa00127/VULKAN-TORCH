@@ -3,14 +3,14 @@
 **🌏 Language / 语言:** **中文** · [English](paddleocr.en.md)
 
 从零把 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 的 **PP-OCRv6_medium_det / _rec** 移植到 [vulkan-torch](../README.md)，
-代码在 [`example/python/ocr_py/`](../example/python/ocr_py/)，既可以检测也能识别（默认只做识别）。
+代码在 [`example/python/ocr_vt/`](../example/python/ocr_vt/)，既可以检测也能识别（默认只做识别）。
 
 所有示例模型的概览：[example-models.md](example-models.md)。
 
 ```python
 import sys
-sys.path[:0] = ["<repo>", "<repo>/example/python"]   # vulkantorch，然后是 ocr_py
-from ocr_py.ocr import Ocr
+sys.path[:0] = ["<repo>", "<repo>/example/python"]   # vulkantorch，然后是 ocr_vt
+from ocr_vt.ocr import Ocr
 
 ocr = Ocr()
 text = ocr.read_line(rgb)                 # 一行裁好的图 -> 文本（只识别）
@@ -82,7 +82,7 @@ ocr = Ocr(rec_path="...", det_path="...", dict_path="...")   # 或逐个文件�
 ### 文件
 
 ```
-ocr_py/
+ocr_vt/
   ocr.py        Ocr API（read_line）+ det/rec 预处理
   rec.py        LCNetV4 + EncoderWithLightSVTR + CTC head
   det.py        LCNetV4 + RepLKFPN neck + DB head
@@ -90,20 +90,20 @@ ocr_py/
   postproc.py   DB 框后处理 + CTC 解码
   weights.py    GGUF -> 设备张量
   nn.py         算子助手（conv+BN 折偏置、hardsigmoid、layer_norm、pool）
-  cli.py        python example/python/ocr_py/cli.py --line line.png
+  cli.py        python example/python/ocr_vt/cli.py --line line.png
   screen_translator.py  PyQt6 屏幕划词翻译工具：框选屏幕文字 -> OCR ->（可选）LLM 翻译
 ```
 
 ### 屏幕划词翻译工具
 
-[`screen_translator.py`](../example/python/ocr_py/screen_translator.py) 是基于本小模型的一个小 PyQt6 桌面工具：
+[`screen_translator.py`](../example/python/ocr_vt/screen_translator.py) 是基于本小模型的一个小 PyQt6 桌面工具：
 按快捷键（默认 `Ctrl+Alt+Shift+O`，可自定义）或点按钮，在屏幕上框选任意文字，它会识别框内内容
 （默认只识别；勾「多行/整块」走 det+rec）——勾上「翻译」再用 OpenAI 兼容的 LLM 端点翻译
 （base/model/key 都在 config 里）。竖排（漫画）文字自动处理（瘦高的框转 90°）。界面语言可切换
 （中文/English）且会记住。
 
 ```bat
-python example\python\ocr_py\screen_translator.py
+python example\python\ocr_vt\screen_translator.py
 ```
 
 设置（快捷键、LLM 端点、界面语言……）存在 `data/ocr/screen_translator.json`（已 gitignore），

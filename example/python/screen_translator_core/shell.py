@@ -1,28 +1,21 @@
-"""划词翻译器 — draw a box over any on-screen text, OCR it (PP-OCRv6), optionally
-translate it with an LLM (OpenAI-compatible endpoint).
+"""划词翻译器外壳 — the model-agnostic half of the screen translator.
 
-PyQt6 UI. Click 「截屏划词」(or the global hotkey) -> the tool hides, a full-screen
-overlay lets you drag a box (screen stays as-is, only the box is outlined) -> the box is
-recognised (rec-only -> text) and, if the translate box is ticked, sent to the LLM.
+Everything that is not "how do I recognize a cropped region" lives here: the PyQt6
+window, the full-screen selection overlay, the pinned subtitle, the settings dialog, the
+system-wide hotkey, the tray icon, the i18n table, the config file, and the LLM call.
 
-    python example/python/ocr_py/screen_translator.py [--config PATH]
+An example plugs in a :class:`Backend` (how to load a model and read one crop) via
+``run(backend)``; see ``ocr_vt/screen_translator.py`` and
+``paddleocrvl_vt/screen_translator.py``. The two entry points keep their own paths, so
+``python example/python/ocr_vt/screen_translator.py`` still works.
 
-The UI is bilingual (中文 / English); pick the language in 「设置」/ Settings (saved in
-config; takes effect on restart). Everything — LLM, hotkey, OCR model, options — lives in
-the config file:
+Design notes worth keeping (learned the hard way, see the comments at each site):
 
-    "ui_lang":   "zh",                 # "zh" | "en"
-    "api_base":  "https://api.deepseek.com",   # any OpenAI-compatible base URL
-    "api_model": "",                   # must be set (no default)
-    "api_key":   "",                   # fill in here or in Settings
-    "model_dir": "",                   # "" = repo default (model/ppocrv6/gguf/)
-    "precision": "f32",                # "f32" | "f16"
-
-It resolves to an existing <repo>/data/ocr/screen_translator.json, else to
-%APPDATA%/screen-translator/config.json (outside the repo, so a copy of the tool next to
-another project keeps its own settings); --config PATH / $OCR_TRANSLATOR_CONFIG override.
-The hotkey is a SYSTEM-WIDE hotkey (Windows RegisterHotKey); OCR + network run on one
-persistent worker thread, so the UI never blocks.
+* the OCR/LLM work runs on one persistent ``QThread``, so the UI never blocks;
+* the subtitle is an independent top-level window, so ``close()`` on the main window
+  does not take it down — quitting has to be explicit;
+* ``QTextLine`` views die with their ``QTextLayout``, and line height must come from
+  ``QTextLine.height()`` rather than the font metrics (font fallback).
 """
 import argparse
 import ctypes
@@ -41,24 +34,26 @@ for p in (ROOT, PYDIR):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from PyQt6.QtCore import (Qt, QRect, QRectF, QPointF, QThread, pyqtSignal,
+from PyQt6.QtCore import (Qt, QRect, QRectF, QPointF, QThread, pyqtSignal,   # noqa: E402
                           QAbstractNativeEventFilter)
-from PyQt6.QtGui import (QPixmap, QImage, QPainter, QPen, QColor, QFont, QPainterPath,
-                         QTextLayout, QTextOption, QGuiApplication, QKeySequence,
-                         QShortcut, QAction, QIcon)
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QDialog, QVBoxLayout,
-                             QHBoxLayout, QFormLayout, QPushButton, QCheckBox, QPlainTextEdit,
-                             QLabel, QComboBox, QKeySequenceEdit, QDialogButtonBox, QLineEdit,
+from PyQt6.QtGui import (QPixmap, QImage, QPainter, QPen, QColor, QFont,     # noqa: E402
+                         QPainterPath, QTextLayout, QTextOption, QGuiApplication,
+                         QKeySequence, QShortcut, QAction, QIcon)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QDialog,     # noqa: E402
+                             QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton,
+                             QCheckBox, QPlainTextEdit, QLabel, QComboBox,
+                             QKeySequenceEdit, QDialogButtonBox, QLineEdit,
                              QFileDialog, QSpinBox, QMenu, QSystemTrayIcon)
 
 # (native name, English name) — the target language list; shown as "→ <native>"
 LANGUAGES = [("中文", "Chinese"), ("English", "English"), ("日本語", "Japanese"),
              ("한국어", "Korean"), ("Español", "Spanish"), ("Français", "French")]
 
+# the keys the shell itself owns; a backend adds its own via Backend.extra_config
 DEFAULT_CONFIG = {"hotkey": "Ctrl+Alt+Shift+O", "target": "Chinese", "translate": False,
-                  "det": False, "orient": "auto", "reasoning": "off", "ui_lang": "zh",
+                  "reasoning": "off", "ui_lang": "zh",
                   "api_base": "https://api.deepseek.com", "api_model": "",
-                  "api_key": "", "model_dir": "", "precision": "f32",
+                  "api_key": "",
                   "overlay": True, "overlay_pos": None, "overlay_size": 28,
                   "overlay_alpha": 150, "overlay_src": True, "overlay_locked": True,
                   "overlay_opacity": 100}
@@ -68,15 +63,10 @@ DEFAULT_CONFIG = {"hotkey": "Ctrl+Alt+Shift+O", "target": "Chinese", "translate"
 
 STRINGS = {
     "zh": {
-        "app_title": "划词翻译 (PP-OCRv6 + LLM)",
         "btn_capture": "截屏划词", "btn_settings": "设置",
-        "chk_det": "多行/整块",
-        "chk_det_tip": "勾选 = det+rec：框里可有多行。不勾 = 整框当一行（快 ~50×）。",
         "chk_translate": "翻译",
         "reason_off": "思考:关", "reason_low": "思考:低", "reason_high": "思考:高", "reason_max": "思考:最高",
         "reason_tip": "仅翻译时生效：off = 关闭思考；low/high/max = 开启思考并设推理强度。",
-        "dir_auto": "方向:自动", "dir_h": "方向:横排", "dir_v": "方向:竖排",
-        "dir_tip": "竖排（漫画/日文竖排）：裁框后逆时针转 90° 再识别。\n自动 = 按裁剪框的高宽比判断（高>宽 视为竖排）。",
         "lbl_src": "识别文本", "lbl_dst": "翻译",
         "status_hotkey_global": "快捷键 {key}：全局可用 · 点「{btn}」或按快捷键开始",
         "status_hotkey_scope": "快捷键 {key}：仅窗口聚焦时有效（该组合可能被占用） · 点「{btn}」或按快捷键开始",
@@ -87,11 +77,20 @@ STRINGS = {
         "status_done": "完成 · {n} 字（已翻译）",
         "status_error": "出错: ",
         "status_settings_saved": "设置已保存",
+        "status_model_loading": "模型加载中…",
+        "status_model_ready": "模型已就绪 · 点「{btn}」或按快捷键 {key} 开始",
         "status_bad_hotkey": "设置已保存；但快捷键 '{key}' 无效（需修饰键+键），未改。",
         "status_lang_changed": "界面语言已保存 —— 重启程序后生效。",
+        "status_model_changed": "设置已保存 —— 正在重新加载模型…",
         "settings_title": "设置",
         "settings_hotkey": "截图快捷键",
         "settings_hotkey_tip": "点这里然后按组合键。需要至少一个修饰键（Ctrl/Alt/Shift/Win）。",
+        "settings_model_section": "模型",
+        "settings_browse": "浏览…",
+        "settings_config": "配置文件",
+        "settings_config_tip": "换位置：启动时加 --config <路径>，或设环境变量 {env}。",
+        "btn_open_config": "打开所在文件夹",
+        "settings_uilang": "界面语言",
         "chk_overlay": "字幕",
         "chk_overlay_tip": "把识别结果显示成置顶悬浮字幕（像音乐播放器的歌词），默认鼠标穿透、不挡操作。",
         "btn_move": "移动",
@@ -100,38 +99,22 @@ STRINGS = {
         "settings_overlay_opacity": "整体不透明度 (%)",
         "settings_overlay_lock": "锁定位置（鼠标穿透）",
         "settings_overlay_lock_tip": "勾上 = 字幕层不收鼠标（点击落到下面的窗口），也不能拖；取消勾选就能拖到任意位置。",
-        "btn_quit": "退出",
-        "tray_hint": "已缩到托盘 · 双击图标恢复窗口，右键退出",
         "settings_overlay_size": "译文字号",
         "settings_overlay_alpha": "字幕背景浓度",
-        "settings_uilang": "界面语言",
-        "settings_model_dir": "识别模型目录",
-        "settings_model_dir_tip": "留空 = 仓库默认（model/ppocrv6/gguf/），也可用环境变量 OCR_MODEL_DIR。\n改这里会在下次识别时重新加载模型。",
-        "settings_precision": "精度",
-        "settings_precision_tip": "f16 需要该目录里存在对应的 f16 GGUF；缺了就回落 f32。",
-        "ph_model_dir": "留空 = 仓库默认 model/ppocrv6/gguf",
-        "settings_browse": "浏览…",
-        "settings_config": "配置文件",
-        "settings_config_tip": "换位置：启动时加 --config <路径>，或设环境变量 OCR_TRANSLATOR_CONFIG。",
-        "btn_open_config": "打开所在文件夹",
-        "status_model_changed": "设置已保存 —— 模型将在下次识别时重新加载",
-        "settings_model": "模型",
+        "btn_quit": "退出",
+        "tray_hint": "已缩到托盘 · 双击图标恢复窗口，右键退出",
         "ph_base": "https://api.deepseek.com  (OpenAI 兼容 base url)",
         "ph_model": "填模型名，如 deepseek-chat / deepseek-reasoner",
         "ph_key": "在此填入 API key（保存进 config）",
         "err_no_key": "未设置 API key —— 在「设置」里填 api_key（存进 config）",
         "err_no_model": "未设置模型名 —— 在「设置」里填 api_model（如 deepseek-chat / deepseek-reasoner）",
+        "lbl_api_model": "模型名",
     },
     "en": {
-        "app_title": "Screen Translator (PP-OCRv6 + LLM)",
         "btn_capture": "Capture", "btn_settings": "Settings",
-        "chk_det": "Multi-line",
-        "chk_det_tip": "On = det+rec: the box may hold several lines. Off = treat the whole box as one line (~50× faster).",
         "chk_translate": "Translate",
         "reason_off": "Think:off", "reason_low": "Think:low", "reason_high": "Think:high", "reason_max": "Think:max",
         "reason_tip": "Translation only: off = no thinking; low/high/max = enable thinking at that reasoning effort.",
-        "dir_auto": "Dir:auto", "dir_h": "Dir:horiz", "dir_v": "Dir:vert",
-        "dir_tip": "Vertical (manga / vertical Japanese): rotate the crop 90° CCW before OCR.\nAuto = decide by the box's aspect ratio (taller than wide → vertical).",
         "lbl_src": "Recognized text", "lbl_dst": "Translation",
         "status_hotkey_global": "Hotkey {key}: system-wide · click \"{btn}\" or press the hotkey to start",
         "status_hotkey_scope": "Hotkey {key}: only while this window is focused (combo may be taken) · click \"{btn}\" or press the hotkey",
@@ -142,11 +125,20 @@ STRINGS = {
         "status_done": "Done · {n} chars (translated)",
         "status_error": "Error: ",
         "status_settings_saved": "Settings saved",
+        "status_model_loading": "Loading model…",
+        "status_model_ready": "Model ready · click \"{btn}\" or press {key} to start",
         "status_bad_hotkey": "Saved, but hotkey '{key}' is invalid (needs a modifier + a key) — left unchanged.",
         "status_lang_changed": "UI language saved — restart to apply.",
+        "status_model_changed": "Saved — reloading the model…",
         "settings_title": "Settings",
         "settings_hotkey": "Capture hotkey",
         "settings_hotkey_tip": "Click, then press the combo. Needs at least one modifier (Ctrl/Alt/Shift/Win).",
+        "settings_model_section": "Model",
+        "settings_browse": "Browse…",
+        "settings_config": "Config file",
+        "settings_config_tip": "To move it: pass --config <path>, or set {env}.",
+        "btn_open_config": "Open folder",
+        "settings_uilang": "UI language",
         "chk_overlay": "Subtitle",
         "chk_overlay_tip": "Show the result as a pinned on-screen subtitle (music-player-lyrics style); click-through by default so it never blocks your work.",
         "btn_move": "Move",
@@ -155,27 +147,16 @@ STRINGS = {
         "settings_overlay_opacity": "Overall opacity (%)",
         "settings_overlay_lock": "Lock position (click-through)",
         "settings_overlay_lock_tip": "Ticked = the subtitle ignores the mouse (clicks fall through to what is below) and cannot be dragged. Untick to drag it anywhere.",
-        "btn_quit": "Quit",
-        "tray_hint": "Minimized to the tray · double-click the icon to restore, right-click to quit",
         "settings_overlay_size": "Subtitle font size",
         "settings_overlay_alpha": "Subtitle background",
-        "settings_uilang": "UI language",
-        "settings_model_dir": "OCR model dir",
-        "settings_model_dir_tip": "Empty = the repo default (model/ppocrv6/gguf/); OCR_MODEL_DIR works too.\nChanging it reloads the model on the next capture.",
-        "settings_precision": "Precision",
-        "settings_precision_tip": "f16 needs an f16 GGUF in that dir; falls back to f32 otherwise.",
-        "ph_model_dir": "empty = repo default model/ppocrv6/gguf",
-        "settings_browse": "Browse…",
-        "settings_config": "Config file",
-        "settings_config_tip": "To move it: pass --config <path>, or set OCR_TRANSLATOR_CONFIG.",
-        "btn_open_config": "Open folder",
-        "status_model_changed": "Saved — the model reloads on the next capture",
-        "settings_model": "Model",
+        "btn_quit": "Quit",
+        "tray_hint": "Minimized to the tray · double-click the icon to restore, right-click to quit",
         "ph_base": "https://api.deepseek.com  (OpenAI-compatible base url)",
         "ph_model": "model name, e.g. deepseek-chat / deepseek-reasoner",
         "ph_key": "paste API key here (saved into config)",
         "err_no_key": "no API key set — fill api_key in Settings (stored in config)",
         "err_no_model": "no model set — fill api_model in Settings (e.g. deepseek-chat / deepseek-reasoner)",
+        "lbl_api_model": "Model",
     },
 }
 
@@ -187,10 +168,90 @@ def t(_key, **kw):
     return s.format(**kw) if kw else s
 
 
+# ── backend interface ────────────────────────────────────────────────────────────
+
+class Backend:
+    """What the shell needs from a model. Subclass one per example.
+
+    The two hooks that actually do anything are :meth:`load` and :meth:`recognize`;
+    ``reload_key`` says when a loaded model has to be dropped, ``options`` /
+    ``settings_section`` return the widgets whose state is stored in the config, and
+    ``extra_*`` extend the config schema and the i18n table.
+    """
+
+    #: shown in the window title, the tray tooltip and the settings section
+    name = "Backend"
+    #: config file location: %APPDATA%/<config_tag>/config.json
+    config_tag = "screen-translator"
+    #: env var overriding the config path. "" derives SCREEN_TRANSLATOR_<TAG>_CONFIG;
+    #: set it explicitly to keep an already-documented name working.
+    config_env_name = ""
+    #: keep using this in-repo config if it exists (legacy default location)
+    legacy_config = None
+    #: extra config keys + their defaults (also the backend's own settings state)
+    extra_config = {}
+    #: extra i18n entries: {"zh": {...}, "en": {...}}
+    extra_strings = {}
+
+    def load(self, cfg):
+        """Build/return the model. Called on the worker thread; cache it here."""
+        raise NotImplementedError
+
+    def recognize(self, model, arr, options):
+        """RGB uint8 HWC crop + the option state -> text. Worker thread."""
+        raise NotImplementedError
+
+    def reload_key(self, cfg):
+        """Hashable: when this changes the cached model is dropped and reloaded."""
+        raise NotImplementedError
+
+    def options(self, parent, cfg):
+        """-> (widget for the toolbar, callable -> dict of config keys)."""
+        return None, (lambda: {})
+
+    def settings_section(self, parent, cfg):
+        """-> (widget for the settings dialog, callable -> dict of config keys)."""
+        return None, (lambda: {})
+
+    def selftest(self):
+        """Import the example package, to prove the sys.path wiring works."""
+
+
 # ── settings file ───────────────────────────────────────────────────────────────
 
-def load_config(path):
+def config_env(backend):
+    return backend.config_env_name or \
+        backend.config_tag.upper().replace("-", "_") + "_CONFIG"
+
+
+def default_config_path(backend):
+    """Settings live outside the repo by default.
+
+    The old default (<repo>/data/ocr/screen_translator.json) travelled with the checkout,
+    so the settings effectively vanished as soon as the tool was run from a copy."""
+    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, backend.config_tag, "config.json")
+
+
+def resolve_config_path(backend, override=None):
+    """Which settings file this run uses.
+
+    ``--config`` / <CONFIG_ENV> wins outright. Otherwise an **existing in-repo legacy
+    path** wins (that is where the settings have always lived, and nothing is moved
+    behind your back); only when there is no such file — e.g. the tool copied next to
+    another project — does it fall back to the user profile.
+    """
+    if override:
+        return override
+    default = default_config_path(backend)
+    legacy = backend.legacy_config
+    return legacy if (legacy and not os.path.exists(default) and os.path.exists(legacy)) \
+        else default
+
+
+def load_config(path, backend):
     cfg = dict(DEFAULT_CONFIG)
+    cfg.update(backend.extra_config)
     try:
         with open(path, encoding="utf-8") as f:
             cfg.update(json.load(f))
@@ -208,30 +269,6 @@ def save_config(path, cfg):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception as e:      # noqa: BLE001
         print(f"warn: could not save {path}: {e}", file=sys.stderr)
-
-
-def default_config_path():
-    """Settings live outside the repo by default.
-
-    The old default (<repo>/data/ocr/screen_translator.json) travelled with the checkout,
-    so the settings effectively vanished as soon as the tool was run from a copy."""
-    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "screen-translator", "config.json")
-
-
-def resolve_config_path(override=None):
-    """Which settings file this run uses.
-
-    ``--config`` / OCR_TRANSLATOR_CONFIG wins outright. Otherwise an **existing in-repo
-    <repo>/data/ocr/screen_translator.json** wins (that is where the settings have always
-    lived, and nothing is moved behind your back); only when there is no such file — e.g.
-    the tool copied next to another project — does it fall back to the user profile.
-    """
-    if override:
-        return override
-    default = default_config_path()
-    legacy = os.path.join(ROOT, "data", "ocr", "screen_translator.json")
-    return legacy if (not os.path.exists(default) and os.path.exists(legacy)) else default
 
 
 def open_config_folder(path):
@@ -326,92 +363,43 @@ class GlobalHotkey:
             self._ok = False
 
 
-# ── OCR + translation worker (one thread, one Ocr instance) ──────────────────────
-
-def _reading_order(boxes):
-    """-> list of visual lines, each a left-to-right list of boxes.
-
-    ``ocr_py`` follows PaddleOCR's SortQuadBoxes verbatim: order by the top-left corner,
-    then only swap boxes whose tops are <10 px apart (a hard pixel threshold, so it does
-    not scale with resolution or font size). An inline code span is a *short* box whose
-    top sits lower than the text around it, so it ends up after the rest of the line.
-    The library stays faithful to the reference; the tool regroups here by how much boxes
-    overlap vertically -- a resolution-independent signal for "same line".
-    """
-    rows = []                                    # [y_top, y_bottom, [boxes]]
-    for b in sorted(boxes, key=lambda b: b[:, 1].min()):
-        y0, y1 = float(b[:, 1].min()), float(b[:, 1].max())
-        for row in rows:
-            if min(row[1], y1) - max(row[0], y0) > 0.5 * min(row[1] - row[0], y1 - y0):
-                row[0], row[1] = min(row[0], y0), max(row[1], y1)
-                row[2].append(b)
-                break
-        else:
-            rows.append([y0, y1, [b]])
-    rows.sort(key=lambda r: r[0])
-    return [sorted(row[2], key=lambda b: b[:, 0].min()) for row in rows]
-
-
-def _row_text(row, texts):
-    """Join one line's pieces: a real visual gap between two boxes means the source had
-    a space there; boxes that abut or overlap are one continuous run (det routinely cuts
-    a CJK line mid-sentence, gap <= 0), so those are concatenated. Threshold is relative
-    to the box height, so it does not depend on resolution or font size."""
-    out = [texts[0]]
-    for prev, cur, t in zip(row, row[1:], texts[1:]):
-        h = min(prev[:, 1].max() - prev[:, 1].min(), cur[:, 1].max() - cur[:, 1].min())
-        gap = float(cur[:, 0].min()) - float(prev[:, 0].max())
-        out.append(" " if gap > 0.2 * h else "")
-        out.append(t)
-    return "".join(out)
-
-
-def read_region(ocr, rgb):
-    """det+rec over a captured region, read in order (see _reading_order)."""
-    from ocr_py import postproc
-    from ocr_py.ocr import det_preprocess, rec_preprocess
-    bgr = np.ascontiguousarray(rgb[:, :, ::-1])
-    det_in, rh, rw = det_preprocess(bgr)
-    boxes = postproc.boxes_from_prob(ocr._run("det", det_in), rh, rw)
-    lines = []
-    for row in _reading_order(boxes):
-        kept, texts = [], []
-        for box in row:
-            crop = postproc.crop_quad(bgr, box)
-            if crop is None:
-                continue
-            ids = ocr._run("rec_ids", rec_preprocess(crop), np.int32)
-            kept.append(box)
-            texts.append(postproc.ctc_decode_ids(ids, ocr.chars))
-        if kept:
-            lines.append(_row_text(kept, texts))
-    return "\n".join(lines)
-
+# ── recognition + translation worker (one thread, one model instance) ────────────
 
 class Worker(QThread):
-    recognized = pyqtSignal(str)   # OCR text, emitted immediately
+    recognized = pyqtSignal(str)   # text, emitted immediately
     translated = pyqtSignal(str)   # translation ("" if none) — emitted after
     error = pyqtSignal(str)
+    ready = pyqtSignal()           # the model is loaded (warmup finished)
 
-    def __init__(self):
+    def __init__(self, backend):
         super().__init__()
+        self._backend = backend
         self._q = queue.Queue()
-        self._ocr = None
-        self._model = ("", "")       # (model_dir, precision) the live _ocr was built with
+        self._cfg = {}
+        self._model = None
+        self._key = None             # reload_key the live model was built with
         self._llm = {"base": "", "model": "", "key": ""}
 
-    def set_model(self, model_dir, precision):
-        """Repoint OCR at another model dir. Lazy: dropping the instance frees the old
-        weights, so the next job loads the new ones (costs a few seconds, once)."""
-        if (model_dir, precision) != self._model:
-            self._model = (model_dir, precision)
-            self._ocr = None
+    def set_model(self, cfg):
+        """Repoint the backend at another model. Dropping the instance frees the old
+        weights; the new ones are loaded by the next warmup/capture (a few seconds,
+        once). Called from the GUI thread, so the next job is what actually loads."""
+        self._cfg = dict(cfg)
+        key = self._backend.reload_key(cfg)
+        if key != self._key:
+            self._key = key
+            self._model = None
 
     def set_llm(self, base, model, key):
         self._llm = {"base": base or "", "model": model or "", "key": key or ""}
 
-    def submit(self, arr, translate, target, det, orient, reasoning):
-        self._q.put((arr, translate, target, det, orient, reasoning))
+    def warmup(self):
+        """Load the model now, on the worker thread, and keep it. The window opens
+        either way; this just moves the one-off cost off the first capture."""
+        self._q.put(("warmup",))
+
+    def submit(self, arr, translate, target, options, reasoning):
+        self._q.put(("run", arr, translate, target, options, reasoning))
 
     def stop(self):
         self._q.put(None)
@@ -422,31 +410,26 @@ class Worker(QThread):
             item = self._q.get()
             if item is None:
                 break
-            arr, do_translate, target, det, orient, reasoning = item
             try:
-                from PIL import Image
-                img = Image.fromarray(arr)
-                # vertical text (manga): make the tall column a horizontal strip — rotate
-                # 90° CCW so the glyphs lie along a left-to-right line (what rec reads).
-                if orient == "v" or (orient == "auto" and arr.shape[0] > arr.shape[1]):
-                    img = img.rotate(90, expand=True)
-                arr = np.asarray(img)
-                if self._ocr is None:
-                    from ocr_py.ocr import Ocr
-                    kw = {"precision": self._model[1] or None}
-                    if self._model[0]:
-                        kw["model_dir"] = self._model[0]
-                    self._ocr = Ocr(**kw)
-                # det off = one pre-cut line, nothing to order; det on = a region that
-                # may hold several boxes, so read it in reading order
-                text = read_region(self._ocr, arr) if det else self._ocr.read_line(arr)
-                self.recognized.emit(text)          # show source the moment OCR is done
+                if item[0] == "warmup":      # queued jobs are tagged; see submit()
+                    self._ensure_model()
+                    self.ready.emit()
+                    continue
+                _, arr, do_translate, target, options, reasoning = item
+                model = self._ensure_model()
+                text = self._backend.recognize(model, arr, options)
+                self.recognized.emit(text)          # show source the moment it is done
                 trans = ""
                 if do_translate and text.strip():
                     trans = translate_text(text, target, self._llm, reasoning)
                 self.translated.emit(trans)         # then fill in the translation
             except Exception as e:      # noqa: BLE001
                 self.error.emit(f"{type(e).__name__}: {e}")
+
+    def _ensure_model(self):
+        if self._model is None:
+            self._model = self._backend.load(self._cfg)
+        return self._model
 
 
 def translate_text(text, target, llm, reasoning="off"):
@@ -495,7 +478,7 @@ class CaptureOverlay(QWidget):
     def __init__(self, pil_img, disp_pixmap, geo, scale):
         super().__init__(None, Qt.WindowType.FramelessWindowHint |
                          Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self._img = pil_img          # physical-res PIL image (for the OCR crop)
+        self._img = pil_img          # physical-res PIL image (for the crop)
         self._disp = disp_pixmap     # logical-size QPixmap (for painting)
         self._scale = scale          # (sx, sy) physical / logical
         self.setGeometry(geo)
@@ -729,8 +712,9 @@ class SubtitleOverlay(QWidget):
 # ── settings dialog ──────────────────────────────────────────────────────────────
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, cfg, cfg_path=""):
+    def __init__(self, parent, cfg, cfg_path, backend):
         super().__init__(parent)
+        self._backend = backend
         self.setWindowTitle(t("settings_title"))
         form = QFormLayout(self)
         self.keyedit = QKeySequenceEdit(QKeySequence(cfg.get("hotkey", DEFAULT_CONFIG["hotkey"])))
@@ -746,22 +730,13 @@ class SettingsDialog(QDialog):
                 break
         form.addRow(t("settings_uilang"), self.cmb_ui)
 
-        self.ed_modeldir = QLineEdit(cfg.get("model_dir", ""))
-        self.ed_modeldir.setPlaceholderText(t("ph_model_dir"))
-        self.ed_modeldir.setToolTip(t("settings_model_dir_tip"))
-        b_browse = QPushButton(t("settings_browse"))
-        b_browse.clicked.connect(self._browse_model_dir)
-        row_model = QHBoxLayout()
-        row_model.addWidget(self.ed_modeldir)
-        row_model.addWidget(b_browse)
-        form.addRow(t("settings_model_dir"), row_model)
-
-        self.cmb_prec = QComboBox()
-        for p in ("f32", "f16"):
-            self.cmb_prec.addItem(p, p)
-        self.cmb_prec.setCurrentIndex(max(0, self.cmb_prec.findData(cfg.get("precision", "f32"))))
-        self.cmb_prec.setToolTip(t("settings_precision_tip"))
-        form.addRow(t("settings_precision"), self.cmb_prec)
+        # the model section belongs to the backend
+        head = QLabel(t("settings_model_section") + " · " + backend.name)
+        head.setStyleSheet("font-weight:bold")
+        form.addRow(head)
+        sec_w, self._model_read = backend.settings_section(self, cfg)
+        if sec_w is not None:
+            form.addRow(sec_w)
 
         self.chk_ovsrc = QCheckBox(t("settings_overlay"))
         self.chk_ovsrc.setChecked(bool(cfg.get("overlay_src", True)))
@@ -794,12 +769,12 @@ class SettingsDialog(QDialog):
         self.ed_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.ed_key.setPlaceholderText(t("ph_key"))
         form.addRow("API base", self.ed_base)
-        form.addRow(t("settings_model"), self.ed_model)
+        form.addRow(t("lbl_api_model"), self.ed_model)
         form.addRow("API key", self.ed_key)
 
         self.ed_cfgpath = QLineEdit(cfg_path)
         self.ed_cfgpath.setReadOnly(True)
-        self.ed_cfgpath.setToolTip(t("settings_config_tip"))
+        self.ed_cfgpath.setToolTip(t("settings_config_tip", env=config_env(backend)))
         b_cfg = QPushButton(t("btn_open_config"))
         b_cfg.clicked.connect(lambda: open_config_folder(cfg_path))
         row_cfg = QHBoxLayout()
@@ -825,8 +800,7 @@ class SettingsDialog(QDialog):
                 "api_key": self.ed_key.text().strip()}
 
     def model(self):
-        return {"model_dir": self.ed_modeldir.text().strip(),
-                "precision": self.cmb_prec.currentData()}
+        return self._model_read()
 
     def overlay(self):
         return {"overlay_src": self.chk_ovsrc.isChecked(),
@@ -835,39 +809,38 @@ class SettingsDialog(QDialog):
                 "overlay_opacity": self.sp_ovop.value(),
                 "overlay_locked": self.chk_ovlock.isChecked()}
 
-    def _browse_model_dir(self):
-        start = self.ed_modeldir.text().strip() or os.path.expanduser("~")
-        d = QFileDialog.getExistingDirectory(self, t("settings_model_dir"), start)
-        if d:
-            self.ed_modeldir.setText(d)
-
 
 # ── main window ──────────────────────────────────────────────────────────────────
 
+def app_title():
+    return f"划词翻译 ({_BACKEND.name} + LLM)"
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, args, cfg, cfg_path):
+    def __init__(self, args, cfg, cfg_path, backend):
         super().__init__()
         self._args = args
+        self._backend = backend
         self._cfg = cfg
         self._cfg_path = cfg_path
         self._overlay = None
-        self.setWindowTitle(t("app_title"))
+        self.setWindowTitle(app_title())
         self.resize(460, 380)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
-        self._worker = Worker()
+        self._worker = Worker(backend)
         self._worker.recognized.connect(self._on_recognized)
         self._worker.translated.connect(self._on_translated)
         self._worker.error.connect(self._on_error)
+        self._worker.ready.connect(self._on_model_ready)
         self._worker.start()
         self._worker.set_llm(cfg.get("api_base"), cfg.get("api_model"), cfg.get("api_key"))
-        self._worker.set_model(cfg.get("model_dir", ""), cfg.get("precision", "f32"))
+        self._worker.set_model(cfg)
 
         self._sub = SubtitleOverlay(cfg)          # 歌词式置顶字幕层（穿透，不挡操作）
         self._sub.moved.connect(self._on_sub_moved)
         self._sub.set_locked(bool(cfg.get("overlay_locked", True)))
         self._quitting = False
-        self._tray_hinted = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -877,8 +850,11 @@ class MainWindow(QMainWindow):
         self.btn = QPushButton(t("btn_capture"))
         self.btn.setStyleSheet("QPushButton{padding:8px;font-weight:bold}")
         self.btn.clicked.connect(self.capture)
-        self.chk_det = QCheckBox(t("chk_det"))
-        self.chk_det.setToolTip(t("chk_det_tip"))
+        top.addWidget(self.btn)
+        # the model's own knobs go right next to the capture button
+        self._opt_w, self._opt_read = backend.options(self, cfg)
+        if self._opt_w is not None:
+            top.addWidget(self._opt_w)
         self.chk = QCheckBox(t("chk_translate"))
         self.cmb = QComboBox()
         for label, name in LANGUAGES:
@@ -895,13 +871,6 @@ class MainWindow(QMainWindow):
         self.btn_move = QPushButton(t("btn_move"))
         self.btn_move.setCheckable(True)
         self.btn_move.setToolTip(t("btn_move_tip"))
-        self.cmb_dir = QComboBox()
-        for key, val in [("dir_auto", "auto"), ("dir_h", "h"), ("dir_v", "v")]:
-            self.cmb_dir.addItem(t(key), val)
-        self.cmb_dir.setToolTip(t("dir_tip"))
-        top.addWidget(self.btn)
-        top.addWidget(self.chk_det)
-        top.addWidget(self.cmb_dir)
         top.addWidget(self.chk)
         top.addWidget(self.cmb)
         top.addWidget(self.cmb_reason)
@@ -921,15 +890,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.trans, 3)
 
         # restore saved settings
-        self.chk_det.setChecked(bool(cfg.get("det")))
         self.chk.setChecked(bool(cfg.get("translate")))
         for i in range(self.cmb.count()):
             if self.cmb.itemData(i) == cfg.get("target"):
                 self.cmb.setCurrentIndex(i)
-                break
-        for i in range(self.cmb_dir.count()):
-            if self.cmb_dir.itemData(i) == cfg.get("orient"):
-                self.cmb_dir.setCurrentIndex(i)
                 break
         for i in range(self.cmb_reason.count()):
             if self.cmb_reason.itemData(i) == cfg.get("reasoning"):
@@ -939,10 +903,8 @@ class MainWindow(QMainWindow):
         self._sub.set_visible(self.chk_overlay.isChecked())
         self.btn_move.setChecked(not bool(cfg.get("overlay_locked", True)))
 
-        self.chk_det.toggled.connect(self._persist)
         self.chk.toggled.connect(self._persist)
         self.cmb.currentIndexChanged.connect(self._persist)
-        self.cmb_dir.currentIndexChanged.connect(self._persist)
         self.cmb_reason.currentIndexChanged.connect(self._persist)
         self.chk_overlay.toggled.connect(self._on_overlay_toggled)
         self.btn_move.toggled.connect(self._on_move_toggled)
@@ -954,9 +916,20 @@ class MainWindow(QMainWindow):
         self._shortcut = QShortcut(QKeySequence(cfg.get("hotkey", DEFAULT_CONFIG["hotkey"])), self)
         self._shortcut.activated.connect(self.capture)
         self._apply_hotkey(cfg.get("hotkey", DEFAULT_CONFIG["hotkey"]), announce=False)
-        self.statusBar().showMessage(t(
-            "status_hotkey_global" if self._hotkey_global else "status_hotkey_scope",
-            key=self._cfg["hotkey"], btn=t("btn_capture")))
+
+        # Load the model now (on the worker) and keep it resident, so the first capture
+        # is a capture and nothing else. --selftest stays model-free on purpose.
+        if not getattr(args, "selftest", False):
+            self.statusBar().showMessage(t("status_model_loading"))
+            self._worker.warmup()
+        else:
+            self.statusBar().showMessage(t(
+                "status_hotkey_global" if self._hotkey_global else "status_hotkey_scope",
+                key=self._cfg["hotkey"], btn=t("btn_capture")))
+
+    def _on_model_ready(self):
+        self.statusBar().showMessage(t("status_model_ready", btn=t("btn_capture"),
+                                        key=self._cfg["hotkey"]))
 
     def _apply_hotkey(self, spec, announce=True):
         gok = self._hotkey.set(spec)
@@ -1011,11 +984,10 @@ class MainWindow(QMainWindow):
         arr = np.asarray(crop.convert("RGB"))
         self.statusBar().showMessage(t("status_capturing", w=arr.shape[1], h=arr.shape[0]))
         self._worker.submit(arr, self.chk.isChecked(), self.cmb.currentData(),
-                            self.chk_det.isChecked(), self.cmb_dir.currentData(),
-                            self.cmb_reason.currentData())
+                            self._opt_read(), self.cmb_reason.currentData())
 
     def _on_recognized(self, text):
-        self.txt.setPlainText(text)     # source shows as soon as OCR finishes
+        self.txt.setPlainText(text)     # source shows as soon as recognition finishes
         self._sub.set_text(text)        # 译文留空 → 原文先顶上，等翻译回来再换
         tail = t("status_translating") if self.chk.isChecked() else ""
         self.statusBar().showMessage(t("status_recognized", n=len(text), tail=tail))
@@ -1032,9 +1004,10 @@ class MainWindow(QMainWindow):
     # -- subtitle ------------------------------------------------------------------
 
     def _on_overlay_toggled(self, on):
+        # 只开关显示。**不碰锁定状态**——以前隐藏时会顺手把「移动」取消勾选，
+        # 而那会把 overlay_locked 落成 true，于是下次再勾上字幕就默认是锁定的。
+        # 锁定与否只由「移动」按钮和设置对话框决定，跟显示与否无关。
         self._sub.set_visible(on)
-        if not on:
-            self.btn_move.setChecked(False)     # 不显示就无所谓移动
         self.act_overlay.blockSignals(True)     # 托盘菜单里的勾跟着走
         self.act_overlay.setChecked(on)
         self.act_overlay.blockSignals(False)
@@ -1090,7 +1063,7 @@ class MainWindow(QMainWindow):
         menu.addAction(quit_act)
         self._tray_menu = menu          # 持有引用，否则菜单会被回收
         self.tray.setContextMenu(menu)
-        self.tray.setToolTip(t("app_title"))
+        self.tray.setToolTip(app_title() + "\n" + t("tray_hint"))
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
@@ -1113,16 +1086,15 @@ class MainWindow(QMainWindow):
     # -- settings ------------------------------------------------------------------
 
     def open_settings(self):
-        dlg = SettingsDialog(self, self._cfg, self._cfg_path)
+        dlg = SettingsDialog(self, self._cfg, self._cfg_path, self._backend)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             llm = dlg.llm()
             self._cfg.update(llm)
             self._worker.set_llm(llm["api_base"], llm["api_model"], llm["api_key"])
             model = dlg.model()
-            model_changed = (model["model_dir"], model["precision"]) != (
-                self._cfg.get("model_dir", ""), self._cfg.get("precision", "f32"))
+            model_changed = any(model[k] != self._cfg.get(k) for k in model)
             self._cfg.update(model)
-            self._worker.set_model(model["model_dir"], model["precision"])
+            self._worker.set_model(self._cfg)
             self._cfg.update(dlg.overlay())
             self._sub.apply_cfg(self._cfg)
             self._sub.set_locked(bool(self._cfg.get("overlay_locked", True)))
@@ -1137,6 +1109,7 @@ class MainWindow(QMainWindow):
                 self._apply_hotkey(spec)
                 if model_changed:
                     self.statusBar().showMessage(t("status_model_changed"))
+                    self._worker.warmup()       # reload now; "ready" replaces the message
                 else:
                     self.statusBar().showMessage(t("status_lang_changed") if lang_changed
                                                  else t("status_settings_saved"))
@@ -1144,22 +1117,22 @@ class MainWindow(QMainWindow):
         return
 
     def _persist(self, *_):
-        self._cfg["det"] = self.chk_det.isChecked()
         self._cfg["translate"] = self.chk.isChecked()
         self._cfg["target"] = self.cmb.currentData()
-        self._cfg["orient"] = self.cmb_dir.currentData()
         self._cfg["reasoning"] = self.cmb_reason.currentData()
         self._cfg["overlay"] = self.chk_overlay.isChecked()
+        self._cfg.update(self._opt_read())
         save_config(self._cfg_path, self._cfg)
 
     def closeEvent(self, e):
         if not self._quitting:              # 叉叉 = 缩到托盘，不等于退出
             e.ignore()
             self.hide()
-            if not self._tray_hinted:
-                self._tray_hinted = True
-                self.tray.showMessage(t("app_title"), t("tray_hint"),
-                                      QSystemTrayIcon.MessageIcon.Information, 3000)
+            # No tray balloon: on Windows it plays the notification sound whatever icon
+            # we pass (Qt has no NIIF_NOSOUND, and Win11 turns the balloon into a toast
+            # whose sound comes from the toast settings). The hint lives in the tray
+            # tooltip instead -- hover the icon to see it.
+            self.statusBar().showMessage(t("tray_hint"))
             return
         self._hotkey.release()
         self._worker.stop()
@@ -1173,29 +1146,34 @@ def _pil_to_qimage(img):
     return QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888).copy()
 
 
-def main(argv=None):
-    global _LANG
-    ap = argparse.ArgumentParser(description="Screen translator (PP-OCRv6 + LLM)")
-    ap.add_argument("--config", default=resolve_config_path(os.environ.get("OCR_TRANSLATOR_CONFIG")),
-                    help="settings file (default: an existing <repo>/data/ocr/screen_translator.json, "
-                         "else %APPDATA%/screen-translator/config.json)")
+def run(backend, argv=None):
+    """Entry point for an example: ``run(MyBackend(), argv)``."""
+    global _LANG, _BACKEND
+    _BACKEND = backend
+    for lang, extra in (backend.extra_strings or {}).items():
+        STRINGS.setdefault(lang, {}).update(extra)
+
+    ap = argparse.ArgumentParser(description=f"Screen translator ({backend.name} + LLM)")
+    ap.add_argument("--config", default=resolve_config_path(backend, os.environ.get(config_env(backend))),
+                    help="settings file (default: an existing in-repo legacy path, else "
+                         f"%APPDATA%/{backend.config_tag}/config.json)")
     ap.add_argument("--lang", choices=["zh", "en"], help="UI language (overrides config)")
     ap.add_argument("--selftest", action="store_true", help="construct + smoke-test, no GUI loop")
     args = ap.parse_args(argv)
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, backend)
     save_config(args.config, cfg)   # write back the full schema (so all keys are visible)
     _LANG = args.lang or cfg.get("ui_lang", "zh")
 
     app = QApplication(sys.argv[:1])
     app.setQuitOnLastWindowClosed(False)   # 叉叉只缩到托盘，退出走托盘菜单
-    win = MainWindow(args, cfg, args.config)
+    win = MainWindow(args, cfg, args.config, backend)
 
     if args.selftest:
-        from ocr_py.ocr import Ocr   # verifies the sys.path wiring (no model load)
-        dlg = SettingsDialog(win, cfg, args.config)   # catch field/import errors without opening it
+        backend.selftest()                    # verifies the sys.path wiring (no model load)
+        dlg = SettingsDialog(win, cfg, args.config, backend)   # catch field errors
         safe = {k: ("<set>" if k == "api_key" and v else v) for k, v in win._cfg.items()}
-        print(f"OK: ocr_py import ok; ui_lang={_LANG}; config={args.config}")
+        print(f"OK: selftest ok; ui_lang={_LANG}; config={args.config}")
         print(f"    cfg={safe}")   # api_key redacted
         print(f"    hotkey_global={getattr(win, '_hotkey_global', None)}; "
               f"api_key={'set' if cfg.get('api_key') else 'empty'}")
@@ -1207,5 +1185,4 @@ def main(argv=None):
     return app.exec()
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+_BACKEND = Backend()   # replaced by run()

@@ -1,4 +1,4 @@
-"""HiggsTTS AR (Qwen3 backbone) port — staged, validated against higgstts_py/ar_ref.npz."""
+"""HiggsTTS AR (Qwen3 backbone) port — staged, validated against higgstts_vt/ar_ref.npz."""
 import numpy as np
 
 import vulkantorch as mt

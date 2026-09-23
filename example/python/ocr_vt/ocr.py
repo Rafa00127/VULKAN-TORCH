@@ -7,7 +7,7 @@
 Models load from `<repo>/model/ppocrv6/gguf/` unless overridden — pass
 `Ocr(model_dir=...)` (or `rec_path=`/`det_path=`/`dict_path=`), or set the
 `OCR_MODEL_DIR`/`OCR_PRECISION`/`OCR_REC_GGUF`/`OCR_DET_GGUF`/`OCR_DICT` env vars
-(see ocr_py/_paths.py). Only the rec GGUF + dict are needed for `det=False`.
+(see ocr_vt/_paths.py). Only the rec GGUF + dict are needed for `det=False`.
 
 Page segmentation (how a whole chapter image is cut into lines) is app-specific and
 lives with the caller, not here.
@@ -19,7 +19,7 @@ import cv2
 
 import vulkantorch as mt
 
-from ocr_py import det, rec, weights, postproc, _paths
+from ocr_vt import det, rec, weights, postproc, _paths
 
 # det preprocess — paddlex/configs/pipelines/OCR.yaml (SubModules.TextDetection)
 # overrides the model's own inference.yml: limit_side_len 64 (not 736), min.
@@ -71,7 +71,7 @@ class Ocr:
 
         ``model_dir`` points at any directory holding the standard filenames
         (``ppocrv6_rec.<precision>.gguf``, ``ppocrv6_det.<precision>.gguf``,
-        ``ppocrv6_dict.txt``) — see ocr_py/_paths.py. Missing f16 builds fall back to
+        ``ppocrv6_dict.txt``) — see ocr_vt/_paths.py. Missing f16 builds fall back to
         f32. The detection model is loaded lazily, so a rec-only install needs only the
         rec GGUF + dict."""
         self.rt = mt.Runtime()

@@ -1,4 +1,4 @@
-"""Repo path resolution for the higgstts_py example (robust to relocation)."""
+"""Repo path resolution for the higgstts_vt example (robust to relocation)."""
 
 import os
 import sys
@@ -28,7 +28,7 @@ EXAMPLE = os.path.join(ROOT, "example", "python")
 def setup():
     """Put the repo root (vulkantorch) + example dir on sys.path and expose native DLLs.
 
-    Called from the package __init__, so any ``import higgstts_py`` bootstraps the
+    Called from the package __init__, so any ``import higgstts_vt`` bootstraps the
     environment without every script repeating the sys.path / DLL-dir dance.
     """
     for p in (ROOT, EXAMPLE):

@@ -5,7 +5,7 @@ using VulkanTorch;
 namespace HiggsTts;
 
 /// <summary>
-/// Port of higgstts_py/model.py — the HiggsTTS `encode_ref` path:
+/// Port of higgstts_vt/model.py — the HiggsTTS `encode_ref` path:
 /// reference audio -> RVQ codes [T, 8].
 ///
 /// Feature extractor (7x Conv1d + GroupNorm + GELU) -> feature projection ->

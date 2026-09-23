@@ -109,10 +109,10 @@ Covers installing/referencing both libraries, the minimal example, reusing one g
 
 ### Run the TTS Example (`cli.py`)
 
-[example/python/higgstts_py/cli.py](example/python/higgstts_py/cli.py): **reference audio + text → wav** (`encode_ref` + autoregressive + DAC decode).
+[example/python/higgstts_vt/cli.py](example/python/higgstts_vt/cli.py): **reference audio + text → wav** (`encode_ref` + autoregressive + DAC decode).
 
 ```bat
-python example\python\higgstts_py\cli.py ^
+python example\python\higgstts_vt\cli.py ^
   --model path/to/HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --ref-wav data/ref_audio/melinaref_24k.wav ^
@@ -149,7 +149,7 @@ fresh process every run, so it always pays that 0.8 s.)
 
 ### Run the TTS Example (`HiggsTts.Net.exe`)
 
-[example/CSharp/HiggsTts.Net/](example/CSharp/HiggsTts.Net/) is the C# counterpart of `higgstts_py`, equally self-contained (ships its own tokenizer + resampler, no Python-side export needed).
+[example/CSharp/HiggsTts.Net/](example/CSharp/HiggsTts.Net/) is the C# counterpart of `higgstts_vt`, equally self-contained (ships its own tokenizer + resampler, no Python-side export needed).
 
 ```bat
 dotnet build example\CSharp\HiggsTts.Net -c Release
@@ -207,7 +207,7 @@ For the long-audio synth above (~550 frames / 21.5 s audio), the RTFs: **C++ 0.2
 
 ## Example Models
 
-Three small-model ports (two TTS + one OCR) — the code lives in `example/`, the docs in
+Four small-model ports (two TTS + two OCR) — the code lives in `example/`, the docs in
 `sharing_docs/`:
 
 → **[sharing_docs/example-models.en.md](sharing_docs/example-models.en.md)** — overview (summary,
@@ -218,6 +218,7 @@ speed, weight downloads)
 | HiggsTTS v3 | C# + Python | [sharing_docs/higgstts.en.md](sharing_docs/higgstts.en.md) |
 | IndexTTS 2.5 | C# | [sharing_docs/indextts.en.md](sharing_docs/indextts.en.md) |
 | PP-OCRv6 | Python | [sharing_docs/paddleocr.en.md](sharing_docs/paddleocr.en.md) |
+| PaddleOCR-VL 1.6 | Python | [sharing_docs/paddleocrvl.en.md](sharing_docs/paddleocrvl.en.md) |
 
 ---
 

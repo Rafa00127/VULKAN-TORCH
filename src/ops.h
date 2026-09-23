@@ -79,6 +79,16 @@ Tensor permute_pt(const Tensor& a, int pt_axis0, int pt_axis1, int pt_axis2, int
 Tensor rope(const Tensor& a, const Tensor& pos, int n_dims, int mode, int n_ctx_orig,
             float freq_base, float freq_scale, float ext_factor, float attn_factor,
             float beta_fast, float beta_slow);
+// Multi-section RoPE (ggml_rope_multi). `sections` splits the first n_dims/2
+// frequencies into 4 groups, each rotated by its own position row of `pos`; that is
+// what makes this "multi", and it is why `pos` here is 2D ([n_dims/2 pairs, n_sec])
+// instead of the 1D positions `rope` takes. modes:
+//   GGML_ROPE_TYPE_MROPE (8)  - sections [t, h, w, 0], Qwen-VL style
+//   GGML_ROPE_TYPE_VISION (24) - sections [h, w, 0, 0]... see ggml.h; the vision
+//     variant restarts the theta index at each section while MROPE does not.
+Tensor rope_multi(const Tensor& a, const Tensor& pos, int n_dims, const int sections[4], int mode,
+                  int n_ctx_orig, float freq_base, float freq_scale, float ext_factor,
+                  float attn_factor, float beta_fast, float beta_slow);
 // q/k/v PT [nh, T, hd] (ggml ne=[hd,T,nh]); result PT [T, nh, hd] (ne=[hd,nh,T]).
 // Input and output dim order differ -- matches ggml_flash_attn_ext. mask may be
 // undefined.

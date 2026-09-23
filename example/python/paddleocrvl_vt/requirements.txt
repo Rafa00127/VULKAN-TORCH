@@ -1,0 +1,17 @@
+# Third-party deps for the PaddleOCR-VL example.
+#
+# vulkantorch itself is NOT installable from here: it is not on PyPI and there
+# is no pyproject.toml. Build it first, then put the repo root on sys.path
+# (see sharing_docs/how-to-write-code.md):
+#   Windows    python build_win.py
+#   Linux/WSL  sh build.sh
+# Either needs pybind11 -- without it CMake warns and skips the python module.
+#
+# No sentencepiece/tokenizers dependency: the GGUF carries the vocabulary and the
+# SPM merge is implemented in tokenizer.py, matching llama.cpp's llm_tokenizer_spm.
+numpy
+Pillow
+
+# Only needed by screen_translator.py, the PyQt6 screen-OCR tool:
+# PyQt6
+# requests

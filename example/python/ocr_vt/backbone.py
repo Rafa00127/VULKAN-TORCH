@@ -6,7 +6,7 @@ reparameterized + BN-folded by tools/convert_ocr_to_gguf.py.
 """
 import vulkantorch as mt
 
-from ocr_py import nn as N
+from ocr_vt import nn as N
 
 # [kernel, in_ch, out_ch, stride, use_se]; stride is int or (h, w)
 DET_BLOCKS = [

@@ -16,7 +16,7 @@
 
 废话，我不想再重复造了轮子了，token太多没地方花可以喂肥鱼。
 
-在示例中就搞了两个tts模型和一个ocr模型（paddle）的移植示范，可以参考也可以自己拿来玩。
+在示例中就搞了两个tts模型和两个ocr模型（paddle）的移植示范，可以参考也可以自己拿来玩。
 
 对的对的，这还是重复造了两次轮子用于演示某TTS模型的推理作为演示。
 
@@ -109,10 +109,10 @@ third_party/ggml/             只剩下cpu和vk的ggml
 
 ### 跑 TTS 示例（`cli.py`）
 
-[example/python/higgstts_py/cli.py](example/python/higgstts_py/cli.py)：**参考音频 + 文本 → wav**（`encode_ref` + 自回归 + DAC 解码）。
+[example/python/higgstts_vt/cli.py](example/python/higgstts_vt/cli.py)：**参考音频 + 文本 → wav**（`encode_ref` + 自回归 + DAC 解码）。
 
 ```bat
-python example\python\higgstts_py\cli.py ^
+python example\python\higgstts_vt\cli.py ^
   --model path/to/HiggsTTS3-q8_0.gguf ^
   --ref-text "I have no doubt you will become Elden Lord, may you take the throne." ^
   --ref-wav data/ref_audio/melinaref_24k.wav ^
@@ -148,7 +148,7 @@ RTF:             0.389 x
 
 ### 跑 TTS 示例（`HiggsTts.Net.exe`）
 
-[example/CSharp/HiggsTts.Net/](example/CSharp/HiggsTts.Net/) 是 `higgstts_py` 的 C# 对等实现，同样自包含（自带分词器 + 重采样器，不需要 Python 侧导出任何东西）。
+[example/CSharp/HiggsTts.Net/](example/CSharp/HiggsTts.Net/) 是 `higgstts_vt` 的 C# 对等实现，同样自包含（自带分词器 + 重采样器，不需要 Python 侧导出任何东西）。
 
 ```bat
 dotnet build example\CSharp\HiggsTts.Net -c Release
@@ -206,7 +206,7 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 
 ## 示例模型
 
-三个小模型（两个 TTS + 一个 OCR）的移植，代码在 `example/`，文档在 `sharing_docs/`：
+四个小模型（两个 TTS + 两个 OCR）的移植，代码在 `example/`，文档在 `sharing_docs/`：
 
 → **[sharing_docs/example-models.md](sharing_docs/example-models.md)** —— 总览（简介、速度、权重下载）
 
@@ -215,6 +215,7 @@ c++版higgstts在本项目中就不重复造轮子了，直接用[这个项目](
 | HiggsTTS v3 | C# + Python | [sharing_docs/higgstts.md](sharing_docs/higgstts.md) |
 | IndexTTS 2.5 | C# | [sharing_docs/indextts.md](sharing_docs/indextts.md) |
 | PP-OCRv6 | Python | [sharing_docs/paddleocr.md](sharing_docs/paddleocr.md) |
+| PaddleOCR-VL 1.6 | Python | [sharing_docs/paddleocrvl.md](sharing_docs/paddleocrvl.md) |
 
 ---
 

@@ -5,8 +5,8 @@ Output    : probability map [1, H, W] (sigmoid), DB-postprocessed into boxes.
 """
 import vulkantorch as mt
 
-from ocr_py import backbone
-from ocr_py import nn as N
+from ocr_vt import backbone
+from ocr_vt import nn as N
 
 NECK_CH, REDUCE, N_IC = 256, 2, 4
 SCALE_LIST = [1, 2, 4, 8]
