@@ -35,11 +35,7 @@ text, n_prompt, n_gen = vl.generate_image("page.png", prompt="OCR:")
 | 解码 | **2.07 ms/tok**（482 tok/s） | 1.85 ms/tok |
 | 整张（937 入 + 109 出） | **0.77 s** | 0.67 s |
 
-慢在**视觉塔**（0.46 s）。**输出与 llama-server 逐字一致**；对拍：
-
-```bash
-python tools/vl_compare.py <图> -t ocr --model ... --mmproj ...   # 打印两边 token 数与文本 diff
-```
+慢在**视觉塔**（0.46 s）。**输出与 llama-server 逐字一致**（同图同 prompt，`prompt_n` 都是 937）。
 
 ### 权重
 
@@ -86,6 +82,8 @@ python example/python/paddleocrvl_vt/screen_translator.py
 
 ### 注意
 
+- **把权重转成 F16 快约 19%**（视觉塔 −28%，输出逐字不变）：`python tools/convert/retype_gguf_f16.py
+  in.gguf out.gguf`——BF16→F16 是字节级重解释，偏移不变，881 MB 只要几秒。
 - **整页直喂会退化**（llama-server 同样退化成重复字符）。工作范围大约 **≤2500 图像 token、
   高 ≲2750 px**，切长条是调用方的事。
 - 图像上限写在 **mmproj 里**（`clip.vision.image_max_pixels`，官方约 1.0 MPx），超了**静默缩小**。

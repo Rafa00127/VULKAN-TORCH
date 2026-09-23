@@ -122,5 +122,5 @@ Settings (hotkey, LLM endpoint, UI language, …) live in `data/ocr/screen_trans
 - **CTC is decoded on the GPU.**
 - **det matches PaddleOCR.**
 - **Convolutions run on matrix cores** (2026-09): the fused conv path is ~2.1× faster on
-  det's 9×9 kernels. Re-measure with `tools/bench_ocr.py` (the timings above need weights
-  pre-loaded and lines pre-cut, and A/B has to be interleaved — the script does all three).
+  det's 9×9 kernels. Mind the measurement setup if you re-run it: weights pre-loaded, line
+  segmentation outside the timing, and A/B interleaved.

@@ -38,12 +38,8 @@ A 1842x388 chat screenshot, against a llama-server on llama.cpp (ROCm):
 | decode | **2.07 ms/tok** (482 tok/s) | 1.85 ms/tok |
 | the whole screenshot (937 in + 109 out) | **0.77 s** | 0.67 s |
 
-The **vision tower** is the slow part (0.46 s). **Output is byte-identical to llama-server**; to
-check:
-
-```bash
-python tools/vl_compare.py <image> -t ocr --model ... --mmproj ...   # token counts + text diff
-```
+The **vision tower** is the slow part (0.46 s). **Output is byte-identical to llama-server** (same
+image, same prompt, `prompt_n` 937 on both sides).
 
 ### Weights
 
@@ -91,6 +87,9 @@ The UI shell is shared with [PP-OCRv6's tool](paddleocr.en.md)
 
 ### Notes
 
+- **Retyping the weights to F16 is ~19% faster** (vision tower -28%, output byte-identical):
+  `python tools/convert/retype_gguf_f16.py in.gguf out.gguf` — a byte-level BF16->F16 rewrite that
+  leaves offsets alone, a few seconds for 881 MB.
 - **Feeding a whole page degenerates** (llama-server degenerates into repeated characters on the
   same input). The working envelope is roughly **<=2500 image tokens, <=2750 px tall**; cutting
   the page into strips is the caller's job.
